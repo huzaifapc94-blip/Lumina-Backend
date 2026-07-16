@@ -174,11 +174,11 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
     thread.start()
 
     while True:
-        # Check queue without blocking the event loop
+        # Check queue with small sleep to stay async-friendly
         try:
-            token = token_queue.get_nowait()
+            token = token_queue.get(timeout=0.05)
         except queue.Empty:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.02)
             continue
 
         if token is None:
@@ -237,12 +237,7 @@ async def chat_endpoint(request: ChatRequest):
     # Return server-sent stream
     return StreamingResponse(
         stream_agent_router(request.model_id, messages, api_key),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+        media_type="text/event-stream"
     )
 
 # Static Frontend mounting
