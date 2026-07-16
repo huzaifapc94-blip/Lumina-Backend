@@ -1,0 +1,20 @@
+# Environment variables (API keys)
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+
+# IDE folders
+.vscode/
+.claude/
+
+# Test folders
+testsprite_tests/
+
+# OS files
+Thumbs.db
+.DS_Store
