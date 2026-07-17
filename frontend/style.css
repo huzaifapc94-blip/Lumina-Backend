@@ -544,6 +544,54 @@ body {
     font-weight: 500;
 }
 
+/* Reasoning ("Thinking") panel for reasoning models like GLM */
+.reasoning-panel {
+    margin-bottom: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-bubble-system);
+    overflow: hidden;
+}
+
+.reasoning-summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    user-select: none;
+    list-style: none;
+}
+
+.reasoning-summary::-webkit-details-marker {
+    display: none;
+}
+
+.reasoning-summary:hover {
+    color: var(--text-primary);
+}
+
+.reasoning-icon {
+    color: var(--accent-indigo);
+    flex-shrink: 0;
+}
+
+.reasoning-panel[open] .reasoning-summary {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.reasoning-body {
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+    max-height: 320px;
+    overflow-y: auto;
+}
+
 /* Typing / Pulse Stream Animation */
 .streaming-indicator {
     display: inline-flex;

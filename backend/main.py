@@ -155,13 +155,22 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                 choices = getattr(chunk, "choices", None)
                 if choices and len(choices) > 0:
                     delta = choices[0].delta
-                    if delta and getattr(delta, "content", None):
-                        token_queue.put(delta.content)
+                    if not delta:
+                        continue
+                    # Reasoning models (e.g. GLM) stream their thinking in
+                    # `reasoning_content` while `content` stays null. Forward
+                    # both, tagged, so the frontend can show them separately.
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    if reasoning:
+                        token_queue.put(("reasoning", reasoning))
+                    content = getattr(delta, "content", None)
+                    if content:
+                        token_queue.put(("content", content))
 
         except Exception as e:
             error_msg = str(e)
             status_code = getattr(e, 'status_code', 500)
-            token_queue.put(f"__ERROR__:{status_code}:{error_msg}")
+            token_queue.put(("error", f"{status_code}:{error_msg}"))
         finally:
             token_queue.put(None)  # sentinel
             if client:
@@ -179,22 +188,25 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
     while True:
         # Check queue without blocking the event loop
         try:
-            token = token_queue.get_nowait()
+            item = token_queue.get_nowait()
         except queue.Empty:
             await asyncio.sleep(0.05)
             continue
 
-        if token is None:
+        if item is None:
             break
 
-        if isinstance(token, str) and token.startswith("__ERROR__:"):
-            parts = token.split(":", 2)
-            error_code = parts[1] if len(parts) > 1 else "500"
-            error_msg = parts[2] if len(parts) > 2 else "Unknown error"
-            yield f"data: {json.dumps({'error': f'Agent Router error ({error_code}): {error_msg}'})}\n\n"
+        kind, value = item
+
+        if kind == "error":
+            code, _, msg = value.partition(":")
+            yield f"data: {json.dumps({'error': f'Agent Router error ({code}): {msg}'})}\n\n"
             break
 
-        yield f"data: {json.dumps({'token': token})}\n\n"
+        if kind == "reasoning":
+            yield f"data: {json.dumps({'reasoning': value})}\n\n"
+        else:
+            yield f"data: {json.dumps({'token': value})}\n\n"
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):

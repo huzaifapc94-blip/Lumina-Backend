@@ -40,7 +40,7 @@ async function initApp() {
     await checkServerHealth();
     await loadModelsRegistry();
     renderSidebar();
-    
+
     // Auto-focus input
     chatInput.focus();
 }
@@ -75,7 +75,7 @@ async function loadModelsRegistry() {
     try {
         const response = await fetch('/api/models');
         modelsRegistry = await response.json();
-        
+
         // Populating dropdown
         engineSelect.innerHTML = '';
         modelsRegistry.forEach((model) => {
@@ -308,7 +308,7 @@ function saveSessionsToStorage() {
 function renderSidebar() {
     threadList.innerHTML = '';
     const sortedSessionIds = Object.keys(sessions).sort((a, b) => b - a); // reverse chronological
-    
+
     if (sortedSessionIds.length === 0) {
         const emptyHistory = document.createElement('div');
         emptyHistory.style.padding = '20px';
@@ -325,7 +325,7 @@ function renderSidebar() {
         const item = document.createElement('div');
         item.className = `thread-item ${activeSessionId === id ? 'active' : ''}`;
         item.setAttribute('data-id', id);
-        
+
         item.innerHTML = `
             <div class="thread-title-container">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="thread-icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
@@ -356,7 +356,7 @@ function deleteSession(id) {
     delete sessions[id];
     saveSessionsToStorage();
     renderSidebar();
-    
+
     if (activeSessionId === id) {
         startNewChat();
     }
@@ -366,14 +366,14 @@ function deleteSession(id) {
 function selectSession(id) {
     activeSessionId = id;
     renderSidebar();
-    
+
     const session = sessions[id];
     if (!session) return;
-    
+
     // Hide empty landing state
     emptyState.style.display = 'none';
     chatCanvas.innerHTML = '';
-    
+
     // Set engine selection value to match thread's first configuration (optional convenience)
     if (session.modelId) {
         currentModelId = session.modelId;
@@ -383,15 +383,15 @@ function selectSession(id) {
 
     // Render bubbles
     session.messages.forEach(msg => {
-        appendMessageBubble(msg.role, msg.content, msg.modelId || session.modelId, msg.images);
+        appendMessageBubble(msg.role, msg.content, msg.modelId || session.modelId, msg.images, msg.reasoning);
     });
-    
+
     // Scroll to bottom
     scrollToBottom(true);
 }
 
 // Creates message bubble DOM node
-function appendMessageBubble(role, content, modelId, images) {
+function appendMessageBubble(role, content, modelId, images, reasoning) {
     const row = document.createElement('div');
     row.className = `message-row ${role}`;
 
@@ -419,9 +419,15 @@ function appendMessageBubble(role, content, modelId, images) {
     } else if (role === 'assistant') {
         bubble.innerHTML = renderMarkdown(typeof content === 'string' ? content : '');
     }
-    
+
     wrapper.appendChild(bubble);
-    
+
+    // Render a saved reasoning panel (from a prior reasoning-model turn) above the bubble.
+    if (role === 'assistant' && reasoning) {
+        const panel = createReasoningPanel(bubble);
+        panel.body.innerHTML = renderMarkdown(reasoning);
+    }
+
     if (role === 'assistant' && modelId) {
         const meta = document.createElement('div');
         meta.className = 'message-meta';
@@ -429,10 +435,34 @@ function appendMessageBubble(role, content, modelId, images) {
         meta.innerHTML = `<span class="engine-badge">[Engine: ${escapeHtml(modelName)}]</span>`;
         wrapper.appendChild(meta);
     }
-    
+
     row.appendChild(wrapper);
     chatCanvas.appendChild(row);
     return bubble;
+}
+
+// Builds a collapsible "Thinking" panel for reasoning-model output and
+// inserts it directly above the given answer bubble. Returns { panel, body }.
+function createReasoningPanel(bubble) {
+    const panel = document.createElement('details');
+    panel.className = 'reasoning-panel';
+    panel.open = true;
+
+    const summary = document.createElement('summary');
+    summary.className = 'reasoning-summary';
+    summary.innerHTML = `
+        <svg class="reasoning-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.663 17h4.673M12 3v1M3.34 7l.867.5M20.66 7l-.867.5M12 21a7 7 0 0 1-4-12.75A6.97 6.97 0 0 1 12 5a7 7 0 0 1 4 12.75V19a2 2 0 0 1-2 2h-2z"></path></svg>
+        <span>Thinking</span>`;
+    panel.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'reasoning-body';
+    panel.appendChild(body);
+
+    // Insert the panel just before the answer bubble within the message wrapper.
+    bubble.parentNode.insertBefore(panel, bubble);
+
+    return { panel, body };
 }
 
 // Utility to get display name from ID
@@ -514,13 +544,13 @@ async function submitMessage() {
 
     // Lock UI input controls
     chatInput.disabled = true;
-    
+
     // Show Stop Stream indicator
     stopStreamPanel.classList.add('active');
-    
+
     // Prep Assistant Placeholder bubble
     const assistantBubble = appendMessageBubble('assistant', '', currentModelId);
-    
+
     // Add pulsing typing dot indicator
     const streamIndicator = document.createElement('span');
     streamIndicator.className = 'streaming-indicator';
@@ -530,12 +560,14 @@ async function submitMessage() {
         <span class="streaming-dot"></span>
     `;
     assistantBubble.appendChild(streamIndicator);
-    
+
     scrollToBottom(true);
 
     // Initialize abort token
     activeAbortController = new AbortController();
     let assistantResponseText = '';
+    let reasoningText = '';
+    let reasoningPanel = null;
 
     try {
         // Collect history message payload
@@ -592,21 +624,33 @@ async function submitMessage() {
                         const parsed = JSON.parse(dataJson);
                         if (parsed.error) {
                             throw new Error(parsed.error);
+                        } else if (parsed.reasoning) {
+                            // Reasoning models (e.g. GLM) stream their thinking
+                            // separately. Render it in a collapsible panel above
+                            // the answer bubble.
+                            if (reasoningText === '') {
+                                reasoningPanel = createReasoningPanel(assistantBubble);
+                            }
+                            reasoningText += parsed.reasoning;
+                            reasoningPanel.body.innerHTML = renderMarkdown(reasoningText);
+                            scrollToBottom();
                         } else if (parsed.token) {
                             // Clear initial typing indicator if first token
                             if (assistantResponseText === '') {
                                 assistantBubble.innerHTML = '';
+                                // Collapse the thinking panel once the answer begins.
+                                if (reasoningPanel) reasoningPanel.panel.open = false;
                             }
-                            
+
                             assistantResponseText += parsed.token;
-                            
+
                             // Re-render markdown live with typing cursor appended
                             assistantBubble.innerHTML = renderMarkdown(assistantResponseText);
-                            
+
                             // Append dynamic dot indicators during stream activity
                             const tempIndicator = streamIndicator.cloneNode(true);
                             assistantBubble.appendChild(tempIndicator);
-                            
+
                             scrollToBottom();
                         }
                     } catch (err) {
@@ -621,7 +665,7 @@ async function submitMessage() {
 
     } catch (error) {
         console.error('Streaming connection error:', error);
-        
+
         // Remove trailing typing dots if any
         const indicators = assistantBubble.querySelectorAll('.streaming-indicator');
         indicators.forEach(i => i.remove());
@@ -631,7 +675,7 @@ async function submitMessage() {
         } else {
             assistantResponseText += `\n\n**[Connection Error: ${error.message}]**`;
         }
-        
+
         assistantBubble.innerHTML = renderMarkdown(assistantResponseText);
     } finally {
         // Remove typing indicators
@@ -639,10 +683,11 @@ async function submitMessage() {
         indicators.forEach(i => i.remove());
 
         // Save assistant completion to sessions state
-        if (assistantResponseText) {
+        if (assistantResponseText || reasoningText) {
             session.messages.push({
                 role: 'assistant',
                 content: assistantResponseText,
+                reasoning: reasoningText || undefined,
                 modelId: currentModelId
             });
             saveSessionsToStorage();
@@ -652,7 +697,7 @@ async function submitMessage() {
         chatInput.disabled = false;
         stopStreamPanel.classList.remove('active');
         activeAbortController = null;
-        
+
         // Refocus textarea
         chatInput.focus();
     }
