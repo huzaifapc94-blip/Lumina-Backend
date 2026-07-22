@@ -1,13 +1,11 @@
 import os
 import json
-import asyncio
 from typing import Any, List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from openai import OpenAI
 from dotenv import load_dotenv
 import httpx
 
@@ -99,23 +97,6 @@ CLIENT_HEADERS = {
     "Version": "0.101.0",
 }
 
-def _build_openai_client(api_key: str) -> OpenAI:
-    """
-    Build an OpenAI SDK client pointed at Agent Router.
-    Agent Router exposes an OpenAI-compatible /v1 gateway.
-    We attach the required client fingerprint headers to pass
-    their authentication layer.
-    """
-    http_client = httpx.Client(
-        headers=CLIENT_HEADERS,
-        timeout=httpx.Timeout(60.0, connect=10.0)
-    )
-    return OpenAI(
-        api_key=api_key,
-        base_url="https://agentrouter.org/v1",
-        http_client=http_client
-    )
-
 def _get_field(obj: Any, field: str) -> Any:
     """Read a field from dicts, SDK models, or pydantic extra fields."""
     if obj is None:
@@ -142,7 +123,7 @@ def _coerce_text(value: Any) -> str:
     if isinstance(value, list):
         return "".join(_coerce_text(item) for item in value)
     if isinstance(value, dict):
-        for key in ("text", "content", "output_text", "value"):
+        for key in ("text", "content", "output_text", "value", "message"):
             text = _coerce_text(value.get(key))
             if text:
                 return text
@@ -189,111 +170,102 @@ def _extract_completion_text(completion: Any) -> str:
 
 async def stream_agent_router(model_id: str, messages: list, api_key: str):
     """
-    Streams completions from Agent Router via the OpenAI SDK,
+    Streams completions from Agent Router via raw HTTP,
     yielding custom SSE payloads: data: {"token": "..."}
-
-    Uses synchronous SDK streaming in a thread to avoid blocking the event loop.
     """
-    import queue
-    import threading
+    sanitized_messages = []
+    for msg in messages:
+        role = msg["role"]
+        if role not in ("system", "user", "assistant"):
+            role = "assistant"
+        sanitized_messages.append({"role": role, "content": msg["content"]})
 
-    token_queue = queue.Queue()
+    headers = {
+        **CLIENT_HEADERS,
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    stream_payload = {
+        "model": model_id,
+        "messages": sanitized_messages,
+        "max_tokens": 4096,
+        "stream": True,
+    }
+    completion_payload = {
+        **stream_payload,
+        "stream": False,
+    }
 
-    def producer():
-        """Run the synchronous OpenAI SDK stream in a background thread."""
-        client = None
-        try:
-            client = _build_openai_client(api_key)
-
-            # Ensure all roles are valid OpenAI roles (system, user, assistant)
-            sanitized_messages = []
-            for msg in messages:
-                role = msg["role"]
-                if role not in ("system", "user", "assistant"):
-                    role = "assistant"
-                sanitized_messages.append({"role": role, "content": msg["content"]})
-
-            stream = client.chat.completions.create(
-                model=model_id,
-                messages=sanitized_messages,
-                max_tokens=4096,
-                stream=True
-            )
-
-            emitted_text = False
-            for chunk in stream:
-                if chunk is None:
-                    continue
-                # AgentRouter routes through multiple providers, and their
-                # OpenAI-compatible streams do not always put text in exactly
-                # delta.content. Extract the common variants before giving up.
-                reasoning, content = _extract_stream_text(chunk)
-                if reasoning:
-                    emitted_text = True
-                    token_queue.put(("reasoning", reasoning))
-                if content:
-                    emitted_text = True
-                    token_queue.put(("content", content))
-
-            if not emitted_text:
-                completion = client.chat.completions.create(
-                    model=model_id,
-                    messages=sanitized_messages,
-                    max_tokens=4096,
-                    stream=False
-                )
-                content = _extract_completion_text(completion)
-                if content:
-                    token_queue.put(("content", content))
-                else:
-                    token_queue.put(("error", "502:Agent Router returned an empty response."))
-
-        except Exception as e:
-            error_msg = str(e)
-            status_code = getattr(e, 'status_code', 500)
-            token_queue.put(("error", f"{status_code}:{error_msg}"))
-        finally:
-            token_queue.put(None)  # sentinel
-            if client:
-                try:
-                    client.close()
-                except Exception:
-                    pass
-
-    thread = threading.Thread(target=producer, daemon=True)
-    thread.start()
+    timeout = httpx.Timeout(90.0, connect=10.0, read=90.0)
 
     # Send an initial heartbeat to force headers to flush and bypass proxy buffering
     yield ": heartbeat\n\n"
 
-    while True:
-        # Check queue without blocking the event loop
-        try:
-            item = token_queue.get_nowait()
-        except queue.Empty:
-            await asyncio.sleep(0.05)
-            continue
+    try:
+        emitted_text = False
+        async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                "https://agentrouter.org/v1/chat/completions",
+                json=stream_payload,
+            ) as response:
+                if response.status_code >= 400:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")
+                    yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {error_text}'})}\n\n"
+                    return
 
-        if item is None:
-            break
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line or line.startswith(":") or not line.startswith("data:"):
+                        continue
 
-        kind, value = item
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
 
-        if kind == "error":
-            code, _, msg = value.partition(":")
-            yield f"data: {json.dumps({'error': f'Agent Router error ({code}): {msg}'})}\n\n"
-            break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
 
-        if kind == "reasoning":
-            yield f"data: {json.dumps({'reasoning': value})}\n\n"
-        else:
-            yield f"data: {json.dumps({'token': value})}\n\n"
+                    error = _get_field(chunk, "error")
+                    if error:
+                        yield f"data: {json.dumps({'error': f'Agent Router error: {_coerce_text(error)}'})}\n\n"
+                        return
+
+                    reasoning, content = _extract_stream_text(chunk)
+                    if reasoning:
+                        emitted_text = True
+                        yield f"data: {json.dumps({'reasoning': reasoning})}\n\n"
+                    if content:
+                        emitted_text = True
+                        yield f"data: {json.dumps({'token': content})}\n\n"
+
+            if not emitted_text:
+                response = await client.post(
+                    "https://agentrouter.org/v1/chat/completions",
+                    json=completion_payload,
+                )
+                if response.status_code >= 400:
+                    yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {response.text}'})}\n\n"
+                    return
+
+                completion = response.json()
+                content = _extract_completion_text(completion)
+                if content:
+                    yield f"data: {json.dumps({'token': content})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'error': 'Agent Router returned an empty response.'})}\n\n"
+
+    except httpx.HTTPError as e:
+        yield f"data: {json.dumps({'error': f'Agent Router connection error: {str(e)}'})}\n\n"
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     """
     Unified chat endpoint proxying to Agent Router with live Server-Sent Events.
-    Uses the OpenAI SDK with client fingerprint headers for Agent Router compatibility.
+    Uses direct HTTP with client fingerprint headers for Agent Router compatibility.
     """
     api_key = os.getenv("AGENTROUTER_API_KEY")
     if not api_key:
