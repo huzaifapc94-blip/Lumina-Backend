@@ -494,6 +494,16 @@ function closeSidebarOnMobile() {
     }
 }
 
+function normalizeStreamText(value) {
+    if (value == null) return '';
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return value.map(normalizeStreamText).join('');
+    if (typeof value === 'object') {
+        return normalizeStreamText(value.text ?? value.content ?? value.output_text ?? value.value);
+    }
+    return String(value);
+}
+
 // Main Submit Message Loop
 async function submitMessage() {
     const messageContent = chatInput.value.trim();
@@ -569,6 +579,68 @@ async function submitMessage() {
     let reasoningText = '';
     let reasoningPanel = null;
 
+    const renderAssistantToken = (token) => {
+        const text = normalizeStreamText(token);
+        if (!text) return;
+
+        // Clear initial typing indicator if first token
+        if (assistantResponseText === '') {
+            assistantBubble.innerHTML = '';
+            // Collapse the thinking panel once the answer begins.
+            if (reasoningPanel) reasoningPanel.panel.open = false;
+        }
+
+        assistantResponseText += text;
+
+        // Re-render markdown live with typing cursor appended
+        assistantBubble.innerHTML = renderMarkdown(assistantResponseText);
+
+        // Append dynamic dot indicators during stream activity
+        const tempIndicator = streamIndicator.cloneNode(true);
+        assistantBubble.appendChild(tempIndicator);
+
+        scrollToBottom();
+    };
+
+    const renderReasoningToken = (token) => {
+        const text = normalizeStreamText(token);
+        if (!text) return;
+
+        // Reasoning models may stream their thinking separately. Render it
+        // above the answer and collapse it once answer text arrives.
+        if (reasoningText === '') {
+            reasoningPanel = createReasoningPanel(assistantBubble);
+        }
+        reasoningText += text;
+        reasoningPanel.body.innerHTML = renderMarkdown(reasoningText);
+        scrollToBottom();
+    };
+
+    const processSseLine = (line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data:')) return;
+
+        const dataJson = trimmed.slice(5).trim();
+        if (!dataJson || dataJson === '[DONE]') return;
+
+        let parsed;
+        try {
+            parsed = JSON.parse(dataJson);
+        } catch (err) {
+            console.warn('Skipping malformed SSE frame:', dataJson, err);
+            return;
+        }
+
+        if (parsed.error) {
+            throw new Error(normalizeStreamText(parsed.error));
+        }
+        if (parsed.reasoning) {
+            renderReasoningToken(parsed.reasoning);
+            return;
+        }
+        renderAssistantToken(parsed.token ?? parsed.content ?? parsed.text ?? parsed.output_text);
+    };
+
     try {
         // Collect history message payload
         // We only send prior turns, ignoring the newest user query which is passed in the "message" field
@@ -616,51 +688,17 @@ async function submitMessage() {
             buffer = lines.pop(); // save incomplete line back to buffer
 
             for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed) continue;
-                if (trimmed.startsWith('data:')) {
-                    const dataJson = trimmed.slice(5).trim();
-                    try {
-                        const parsed = JSON.parse(dataJson);
-                        if (parsed.error) {
-                            throw new Error(parsed.error);
-                        } else if (parsed.reasoning) {
-                            // Reasoning models (e.g. GLM) stream their thinking
-                            // separately. Render it in a collapsible panel above
-                            // the answer bubble.
-                            if (reasoningText === '') {
-                                reasoningPanel = createReasoningPanel(assistantBubble);
-                            }
-                            reasoningText += parsed.reasoning;
-                            reasoningPanel.body.innerHTML = renderMarkdown(reasoningText);
-                            scrollToBottom();
-                        } else if (parsed.token) {
-                            // Clear initial typing indicator if first token
-                            if (assistantResponseText === '') {
-                                assistantBubble.innerHTML = '';
-                                // Collapse the thinking panel once the answer begins.
-                                if (reasoningPanel) reasoningPanel.panel.open = false;
-                            }
-
-                            assistantResponseText += parsed.token;
-
-                            // Re-render markdown live with typing cursor appended
-                            assistantBubble.innerHTML = renderMarkdown(assistantResponseText);
-
-                            // Append dynamic dot indicators during stream activity
-                            const tempIndicator = streamIndicator.cloneNode(true);
-                            assistantBubble.appendChild(tempIndicator);
-
-                            scrollToBottom();
-                        }
-                    } catch (err) {
-                        // Suppress invalid parses, but bubble up explicit errors
-                        if (err.message.startsWith('Agent Router') || err.message.startsWith('Upstream')) {
-                            throw err;
-                        }
-                    }
-                }
+                processSseLine(line);
             }
+        }
+
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+            buffer.split('\n').forEach(processSseLine);
+        }
+
+        if (!assistantResponseText && !reasoningText) {
+            throw new Error('The model completed, but no text was returned by the stream.');
         }
 
     } catch (error) {
@@ -681,6 +719,13 @@ async function submitMessage() {
         // Remove typing indicators
         const indicators = assistantBubble.querySelectorAll('.streaming-indicator');
         indicators.forEach(i => i.remove());
+
+        if (!assistantResponseText && reasoningText) {
+            assistantResponseText = reasoningText;
+            reasoningText = '';
+            if (reasoningPanel) reasoningPanel.panel.remove();
+            assistantBubble.innerHTML = renderMarkdown(assistantResponseText);
+        }
 
         // Save assistant completion to sessions state
         if (assistantResponseText || reasoningText) {

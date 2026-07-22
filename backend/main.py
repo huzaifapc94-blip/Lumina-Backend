@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -116,6 +116,77 @@ def _build_openai_client(api_key: str) -> OpenAI:
         http_client=http_client
     )
 
+def _get_field(obj: Any, field: str) -> Any:
+    """Read a field from dicts, SDK models, or pydantic extra fields."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(field)
+
+    value = getattr(obj, field, None)
+    if value is not None:
+        return value
+
+    extra = getattr(obj, "model_extra", None)
+    if isinstance(extra, dict):
+        return extra.get(field)
+
+    return None
+
+def _coerce_text(value: Any) -> str:
+    """Normalize provider-specific text payloads into a plain string."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(_coerce_text(item) for item in value)
+    if isinstance(value, dict):
+        for key in ("text", "content", "output_text", "value"):
+            text = _coerce_text(value.get(key))
+            if text:
+                return text
+        return ""
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return ""
+
+def _extract_stream_text(chunk: Any) -> tuple[str, str]:
+    """Return (reasoning, content) text from an OpenAI-compatible stream chunk."""
+    choices = _get_field(chunk, "choices") or []
+    if not choices:
+        return "", ""
+
+    choice = choices[0]
+    delta = _get_field(choice, "delta") or {}
+    message = _get_field(choice, "message") or {}
+
+    reasoning = ""
+    for field in ("reasoning_content", "reasoning", "thinking"):
+        reasoning += _coerce_text(_get_field(delta, field))
+        reasoning += _coerce_text(_get_field(message, field))
+
+    content = (
+        _coerce_text(_get_field(delta, "content"))
+        or _coerce_text(_get_field(delta, "text"))
+        or _coerce_text(_get_field(message, "content"))
+        or _coerce_text(_get_field(choice, "text"))
+    )
+
+    return reasoning, content
+
+def _extract_completion_text(completion: Any) -> str:
+    choices = _get_field(completion, "choices") or []
+    for choice in choices:
+        message = _get_field(choice, "message") or {}
+        content = (
+            _coerce_text(_get_field(message, "content"))
+            or _coerce_text(_get_field(choice, "text"))
+        )
+        if content:
+            return content
+    return ""
+
 async def stream_agent_router(model_id: str, messages: list, api_key: str):
     """
     Streams completions from Agent Router via the OpenAI SDK,
@@ -149,23 +220,33 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                 stream=True
             )
 
+            emitted_text = False
             for chunk in stream:
                 if chunk is None:
                     continue
-                choices = getattr(chunk, "choices", None)
-                if choices and len(choices) > 0:
-                    delta = choices[0].delta
-                    if not delta:
-                        continue
-                    # Reasoning models (e.g. GLM) stream their thinking in
-                    # `reasoning_content` while `content` stays null. Forward
-                    # both, tagged, so the frontend can show them separately.
-                    reasoning = getattr(delta, "reasoning_content", None)
-                    if reasoning:
-                        token_queue.put(("reasoning", reasoning))
-                    content = getattr(delta, "content", None)
-                    if content:
-                        token_queue.put(("content", content))
+                # AgentRouter routes through multiple providers, and their
+                # OpenAI-compatible streams do not always put text in exactly
+                # delta.content. Extract the common variants before giving up.
+                reasoning, content = _extract_stream_text(chunk)
+                if reasoning:
+                    emitted_text = True
+                    token_queue.put(("reasoning", reasoning))
+                if content:
+                    emitted_text = True
+                    token_queue.put(("content", content))
+
+            if not emitted_text:
+                completion = client.chat.completions.create(
+                    model=model_id,
+                    messages=sanitized_messages,
+                    max_tokens=4096,
+                    stream=False
+                )
+                content = _extract_completion_text(completion)
+                if content:
+                    token_queue.put(("content", content))
+                else:
+                    token_queue.put(("error", "502:Agent Router returned an empty response."))
 
         except Exception as e:
             error_msg = str(e)
