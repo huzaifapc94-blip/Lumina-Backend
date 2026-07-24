@@ -260,42 +260,7 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                         yield f"data: {json.dumps({'token': content})}\n\n"
 
             if not emitted_text:
-                try:
-                    response = await client.post(
-                        "https://agentrouter.org/v1/chat/completions",
-                        json=completion_payload,
-                    )
-                    if "text/html" in response.headers.get("content-type", "") or (response.text and ("aliyunwaf" in response.text or response.text.strip().startswith("<"))):
-                        yield f"data: {json.dumps({'error': 'Agent Router API request was intercepted by Cloud WAF (Aliyun WAF). Please try again in a few moments.'})}\n\n"
-                        return
-
-                    if response.status_code >= 400:
-                        yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {response.text}'})}\n\n"
-                        return
-
-                    res_text = response.text.strip() if response.text else ""
-                    if not res_text:
-                        yield f"data: {json.dumps({'error': 'The model provider returned an empty response. Please try sending your message again.'})}\n\n"
-                        return
-
-                    try:
-                        completion = json.loads(res_text)
-                    except Exception:
-                        yield f"data: {json.dumps({'error': f'Invalid JSON response from model provider: {res_text[:150]}'})}\n\n"
-                        return
-
-                    err = _get_field(completion, "error")
-                    if err:
-                        yield f"data: {json.dumps({'error': f'Agent Router error: {_coerce_text(err)}'})}\n\n"
-                        return
-
-                    content = _extract_completion_text(completion)
-                    if content:
-                        yield f"data: {json.dumps({'token': content})}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'error': 'The model provider returned an empty response. Please try sending your message again.'})}\n\n"
-                except Exception as ex:
-                    yield f"data: {json.dumps({'error': f'Fallback completion failed: {str(ex)}'})}\n\n"
+                yield f"data: {json.dumps({'error': 'The model completed without returning visible text. Please try sending your message again.'})}\n\n"
 
     except httpx.HTTPError as e:
         yield f"data: {json.dumps({'error': f'Agent Router connection error: {str(e)}'})}\n\n"
