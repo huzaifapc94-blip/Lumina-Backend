@@ -208,7 +208,7 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
     stream_payload = {
         "model": model_id,
         "messages": sanitized_messages,
-        "max_tokens": 4096,
+        "max_tokens": 2048,
         "stream": True,
     }
     completion_payload = {
