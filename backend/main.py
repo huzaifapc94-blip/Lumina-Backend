@@ -9,7 +9,10 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import httpx
 
-# Load environment variables
+# Load environment variables (check both backend/.env and root .env)
+env_backend = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(env_backend):
+    load_dotenv(dotenv_path=env_backend)
 load_dotenv()
 
 # Instantiate FastAPI application
