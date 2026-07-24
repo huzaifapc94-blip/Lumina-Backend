@@ -95,6 +95,8 @@ CLIENT_HEADERS = {
     "User-Agent": "codex_cli_rs/0.101.0",
     "Originator": "codex_cli_rs",
     "Version": "0.101.0",
+    "Accept": "application/json, text/event-stream, */*",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 def _get_field(obj: Any, field: str) -> Any:
@@ -263,6 +265,10 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                         "https://agentrouter.org/v1/chat/completions",
                         json=completion_payload,
                     )
+                    if "text/html" in response.headers.get("content-type", "") or (response.text and ("aliyunwaf" in response.text or response.text.strip().startswith("<"))):
+                        yield f"data: {json.dumps({'error': 'Agent Router API request was intercepted by Cloud WAF (Aliyun WAF). Please try again in a few moments.'})}\n\n"
+                        return
+
                     if response.status_code >= 400:
                         yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {response.text}'})}\n\n"
                         return
