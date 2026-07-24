@@ -641,20 +641,23 @@ async function submitMessage() {
         renderAssistantToken(parsed.token ?? parsed.content ?? parsed.text ?? parsed.output_text);
     };
 
+    let isErrorOccurred = false;
+
     try {
-        // Collect history message payload
-        // We only send prior turns, ignoring the newest user query which is passed in the "message" field
-        const historyPayload = session.messages.slice(0, -1).map(m => {
-            if (m.images && m.images.length > 0) {
-                const parts = m.images.map(url => ({
-                    type: 'image_url',
-                    image_url: { url }
-                }));
-                if (m.content) parts.push({ type: 'text', text: m.content });
-                return { role: m.role, content: parts };
-            }
-            return { role: m.role, content: m.content };
-        });
+        // Collect history message payload, filtering out previous error messages
+        const historyPayload = session.messages.slice(0, -1)
+            .filter(m => !(m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('[Connection Error:')))
+            .map(m => {
+                if (m.images && m.images.length > 0) {
+                    const parts = m.images.map(url => ({
+                        type: 'image_url',
+                        image_url: { url }
+                    }));
+                    if (m.content) parts.push({ type: 'text', text: m.content });
+                    return { role: m.role, content: parts };
+                }
+                return { role: m.role, content: m.content };
+            });
 
         const response = await fetch('/api/chat', {
             method: 'POST',
@@ -711,6 +714,7 @@ async function submitMessage() {
         if (error.name === 'AbortError') {
             assistantResponseText += '\n\n*(Generation stopped by user)*';
         } else {
+            isErrorOccurred = true;
             assistantResponseText += `\n\n**[Connection Error: ${error.message}]**`;
         }
 
@@ -727,8 +731,8 @@ async function submitMessage() {
             assistantBubble.innerHTML = renderMarkdown(assistantResponseText);
         }
 
-        // Save assistant completion to sessions state
-        if (assistantResponseText || reasoningText) {
+        // Save assistant completion to sessions state only if successful or stopped by user
+        if ((assistantResponseText || reasoningText) && !isErrorOccurred) {
             session.messages.push({
                 role: 'assistant',
                 content: assistantResponseText,

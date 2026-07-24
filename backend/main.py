@@ -258,20 +258,28 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                         yield f"data: {json.dumps({'token': content})}\n\n"
 
             if not emitted_text:
-                response = await client.post(
-                    "https://agentrouter.org/v1/chat/completions",
-                    json=completion_payload,
-                )
-                if response.status_code >= 400:
-                    yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {response.text}'})}\n\n"
-                    return
+                try:
+                    response = await client.post(
+                        "https://agentrouter.org/v1/chat/completions",
+                        json=completion_payload,
+                    )
+                    if response.status_code >= 400:
+                        yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {response.text}'})}\n\n"
+                        return
 
-                completion = response.json()
-                content = _extract_completion_text(completion)
-                if content:
-                    yield f"data: {json.dumps({'token': content})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'error': 'Agent Router returned an empty response.'})}\n\n"
+                    completion = response.json()
+                    err = _get_field(completion, "error")
+                    if err:
+                        yield f"data: {json.dumps({'error': f'Agent Router error: {_coerce_text(err)}'})}\n\n"
+                        return
+
+                    content = _extract_completion_text(completion)
+                    if content:
+                        yield f"data: {json.dumps({'token': content})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'error': 'The model provider returned an empty response. Please try sending your message again.'})}\n\n"
+                except Exception as ex:
+                    yield f"data: {json.dumps({'error': f'Fallback completion failed: {str(ex)}'})}\n\n"
 
     except httpx.HTTPError as e:
         yield f"data: {json.dumps({'error': f'Agent Router connection error: {str(e)}'})}\n\n"
