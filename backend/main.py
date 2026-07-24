@@ -243,7 +243,10 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
 
                     try:
                         chunk = json.loads(data)
-                    except json.JSONDecodeError:
+                    except Exception:
+                        continue
+
+                    if not chunk or not isinstance(chunk, dict):
                         continue
 
                     error = _get_field(chunk, "error")
