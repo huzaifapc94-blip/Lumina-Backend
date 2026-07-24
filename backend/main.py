@@ -143,7 +143,7 @@ def _extract_stream_text(chunk: Any) -> tuple[str, str]:
     message = _get_field(choice, "message") or {}
 
     reasoning = ""
-    for field in ("reasoning_content", "reasoning", "thinking"):
+    for field in ("reasoning_content", "reasoning", "thinking", "thought"):
         reasoning += _coerce_text(_get_field(delta, field))
         reasoning += _coerce_text(_get_field(message, field))
 
@@ -153,6 +153,15 @@ def _extract_stream_text(chunk: Any) -> tuple[str, str]:
         or _coerce_text(_get_field(message, "content"))
         or _coerce_text(_get_field(choice, "text"))
     )
+
+    if not content and not reasoning:
+        refusal = _coerce_text(_get_field(delta, "refusal")) or _coerce_text(_get_field(message, "refusal"))
+        if refusal:
+            content = f"[Refusal: {refusal}]"
+        else:
+            tool_calls = _get_field(delta, "tool_calls") or _get_field(message, "tool_calls")
+            if tool_calls:
+                content = "[Model requested a tool/function call]"
 
     return reasoning, content
 
@@ -164,6 +173,12 @@ def _extract_completion_text(completion: Any) -> str:
             _coerce_text(_get_field(message, "content"))
             or _coerce_text(_get_field(choice, "text"))
         )
+        if not content:
+            reasoning = ""
+            for field in ("reasoning_content", "reasoning", "thinking", "thought"):
+                reasoning += _coerce_text(_get_field(message, field))
+            if reasoning:
+                content = reasoning
         if content:
             return content
     return ""

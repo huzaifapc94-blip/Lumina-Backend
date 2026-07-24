@@ -1,5 +1,7 @@
 # Environment variables (API keys)
 .env
+*.env
+backend/.env
 
 # Python cache
 __pycache__/
@@ -8,9 +10,11 @@ __pycache__/
 # Virtual environment
 venv/
 
-# IDE folders
+# IDE / Tool folders
 .vscode/
 .claude/
+.codex/
+.agents/
 
 # Test folders
 testsprite_tests/
