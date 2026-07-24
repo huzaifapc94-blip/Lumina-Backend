@@ -267,7 +267,17 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                         yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {response.text}'})}\n\n"
                         return
 
-                    completion = response.json()
+                    res_text = response.text.strip() if response.text else ""
+                    if not res_text:
+                        yield f"data: {json.dumps({'error': 'The model provider returned an empty response. Please try sending your message again.'})}\n\n"
+                        return
+
+                    try:
+                        completion = json.loads(res_text)
+                    except Exception:
+                        yield f"data: {json.dumps({'error': f'Invalid JSON response from model provider: {res_text[:150]}'})}\n\n"
+                        return
+
                     err = _get_field(completion, "error")
                     if err:
                         yield f"data: {json.dumps({'error': f'Agent Router error: {_coerce_text(err)}'})}\n\n"
