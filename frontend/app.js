@@ -4,7 +4,7 @@ let modelsRegistry = [];
 let sessions = {};
 let activeSessionId = null;
 let activeAbortController = null;
-let currentModelId = 'gpt-5.6-sol';
+let currentModelId = 'nvidia/nemotron-3-ultra-550b-a55b';
 let isNearBottom = true;
 let pendingAttachments = [];
 
@@ -94,9 +94,9 @@ async function loadModelsRegistry() {
     } catch (error) {
         console.error('Failed to load models list:', error);
         // Fallback static option
-        engineSelect.innerHTML = '<option value="gpt-5.6-sol">GPT-5.6 Sol</option>';
-        currentModelId = 'gpt-5.6-sol';
-        updateModelDetails('gpt-5.6-sol');
+        engineSelect.innerHTML = '<option value="nvidia/nemotron-3-ultra-550b-a55b">Nemotron 3 Ultra (550B)</option>';
+        currentModelId = 'nvidia/nemotron-3-ultra-550b-a55b';
+        updateModelDetails('nvidia/nemotron-3-ultra-550b-a55b');
     }
 }
 

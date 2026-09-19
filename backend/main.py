@@ -34,36 +34,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Model Registry — uses actual Agent Router model IDs from their /v1/models endpoint
+# Model Registry — uses OpenRouter model IDs from https://openrouter.ai/models
 MODEL_REGISTRY = [
     {
-        "provider": "OpenAI",
-        "model_id": "gpt-5.6-sol",
-        "display_name": "GPT-5.6 Sol",
-        "optimizations": "Flagship Multimodal Synthesis & High-Level Strategy"
+        "provider": "NVIDIA",
+        "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+        "display_name": "Nemotron 3 Ultra (550B)",
+        "optimizations": "Massive-Scale Reasoning, Deep Analysis & Research"
     },
     {
-        "provider": "OpenAI",
-        "model_id": "gpt-6-astra",
-        "display_name": "GPT-6 Astra",
-        "optimizations": "Next-Gen Frontier Intelligence & Advanced Reasoning"
+        "provider": "Qwen",
+        "model_id": "qwen/qwen3.8-27b",
+        "display_name": "Qwen 3.8 27B",
+        "optimizations": "Advanced Multilingual Coding & Logical Reasoning"
     },
     {
-        "provider": "Anthropic",
-        "model_id": "claude-opus-4-8",
-        "display_name": "Claude 4.8 Opus",
-        "optimizations": "Deep Structural Research & Complex Problem Solving"
+        "provider": "Z.AI",
+        "model_id": "z-ai/glm-5.2",
+        "display_name": "GLM 5.2",
+        "optimizations": "High-Performance Cross-Lingual Capabilities"
     },
     {
-        "provider": "Anthropic",
-        "model_id": "claude-opus-5",
-        "display_name": "Claude Opus 5",
-        "optimizations": "Frontier Autonomous Synthesis & Theoretical Analysis"
+        "provider": "Google",
+        "model_id": "google/gemma-4-31b-it:free",
+        "display_name": "Gemma 4 31B (Free)",
+        "optimizations": "Open-Source Efficiency, Instruction Following & Safety"
     },
     {
         "provider": "DeepSeek",
-        "model_id": "deepseek-v4-flash",
-        "display_name": "DeepSeek V4 Flash",
+        "model_id": "deepseek/deepseek-v4-flash-0731:free",
+        "display_name": "DeepSeek V4 Flash 0731 (Free)",
         "optimizations": "High-Speed Thought, Coding & Cost-Effective Reasoning"
     }
 ]
@@ -109,20 +109,17 @@ async def get_models():
 @app.get("/api/health")
 async def health_check():
     """Verify backend and API key readiness."""
-    api_key = os.getenv("AGENTROUTER_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("AGENTROUTER_API_KEY")
     return {
         "status": "healthy",
         "api_key_configured": bool(api_key)
     }
 
-# Required headers to pass Agent Router's client fingerprinting check.
-# Agent Router verifies that requests come from recognized coding clients.
+# OpenRouter requires HTTP-Referer and X-Title headers for identification.
 CLIENT_HEADERS = {
-    "User-Agent": "codex_cli_rs/0.101.0",
-    "Originator": "codex_cli_rs",
-    "Version": "0.101.0",
+    "HTTP-Referer": "https://lumina.ai",
+    "X-Title": "Lumina AI Chat",
     "Accept": "application/json, text/event-stream, */*",
-    "Accept-Language": "en-US,en;q=0.9",
 }
 
 def _get_field(obj: Any, field: str) -> Any:
@@ -211,9 +208,9 @@ def _extract_completion_text(completion: Any) -> str:
             return content
     return ""
 
-async def stream_agent_router(model_id: str, messages: list, api_key: str):
+async def stream_openrouter(model_id: str, messages: list, api_key: str):
     """
-    Streams completions from Agent Router via raw HTTP,
+    Streams completions from OpenRouter via raw HTTP,
     yielding custom SSE payloads: data: {"token": "..."}
     """
     sanitized_messages = []
@@ -247,7 +244,7 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
         async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
             async with client.stream(
                 "POST",
-                "https://agentrouter.org/v1/chat/completions",
+                "https://openrouter.ai/api/v1/chat/completions",
                 json=stream_payload,
             ) as response:
                 if response.status_code >= 400:
@@ -264,7 +261,7 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                                 error_msg = inner
                     except Exception:
                         pass
-                    yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {error_msg}'})}\n\n"
+                    yield f"data: {json.dumps({'error': f'OpenRouter error ({response.status_code}): {error_msg}'})}\n\n"
                     return
 
 
@@ -286,8 +283,10 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                         continue
 
                     error = _get_field(chunk, "error")
+                    if error and isinstance(error, dict):
+                        error = _get_field(error, "message") or _coerce_text(error)
                     if error:
-                        yield f"data: {json.dumps({'error': f'Agent Router error: {_coerce_text(error)}'})}\n\n"
+                        yield f"data: {json.dumps({'error': f'OpenRouter error: {_coerce_text(error)}'})}\n\n"
                         return
 
                     reasoning, content = _extract_stream_text(chunk)
@@ -302,19 +301,18 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
                 yield f"data: {json.dumps({'error': 'The model completed without returning visible text. Please try sending your message again.'})}\n\n"
 
     except httpx.HTTPError as e:
-        yield f"data: {json.dumps({'error': f'Agent Router connection error: {str(e)}'})}\n\n"
+        yield f"data: {json.dumps({'error': f'OpenRouter connection error: {str(e)}'})}\n\n"
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     """
-    Unified chat endpoint proxying to Agent Router with live Server-Sent Events.
-    Uses direct HTTP with client fingerprint headers for Agent Router compatibility.
+    Unified chat endpoint proxying to OpenRouter with live Server-Sent Events.
     """
-    api_key = os.getenv("AGENTROUTER_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("AGENTROUTER_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AGENTROUTER_API_KEY is not configured on the server."
+            detail="OPENROUTER_API_KEY is not configured on the server."
         )
 
     # Validate model_id
@@ -347,7 +345,7 @@ async def chat_endpoint(request: ChatRequest):
 
     # Return server-sent stream
     return StreamingResponse(
-        stream_agent_router(request.model_id, messages, api_key),
+        stream_openrouter(request.model_id, messages, api_key),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
