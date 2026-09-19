@@ -1,27 +1,55 @@
-Project Lumina: Multi-Model AI Chat Interface1. Project OverviewLumina is a premium, minimal, and highly responsive AI chat interface inspired by Claude. The application features an engineering control dashboard allowing users to switch fluidly between various frontier models on a per-session or per-message basis. The entire system utilizes Agent Router as the unified, OpenAI-compatible backend gateway to route user queries and stream live completions.2. Core ObjectivesAntigravity Automation: Clean, modular structural layout designed specifically for automated generation via AI software construction tools.Dynamic Model Interoperability: Zero-downtime shifting between specific next-generation models using a single Agent Router implementation.Immersive Chat UX: High-fidelity interface with live token streaming, contextual metadata tags, and proper technical formatting.3. Model Scope & RegistryThe application must explicitly register, display, and pass the exact model routing parameters to the Agent Router API gateway ([https://agentrouter.org/v1](https://agentrouter.org/v1)).ProviderAgent Router Model IDInterface Display NameTarget OptimizationsOpenAIagentrouter/gpt-5.5GPT-5.5 (Flagship)Advanced Logic, Multimodal Synthesis & StrategyOpenAIagentrouter/gpt-5.4GPT-5.4 (Pro/Speed)Rapid Analytical Reasoning & Live Data OperationsAnthropicagentrouter/claude-opus-4-8Claude 4.8 OpusDeep Structural Research & Complex Problem SolvingAnthropicagentrouter/claude-opus-4-7Claude 4.7 OpusExtended Document Synthesis & Theoretical MathAnthropicagentrouter/claude-sonnet-4-5Claude 4.5 SonnetElite Coding, Software Engineering & RefactoringZhipu AIagentrouter/glm-5.1GLM 5.1High-Performance Cross-Lingual Capabilities4. Technical Architecture Blueprint4.1 Frontend Component LayerTechnology Layout: Modern Single Page Application (SPA) with a dual-pane responsive layout.Left Sidebar: Active chat history threads tracking session IDs, with a prominent + New Chat action button.Main Chat Canvas: High-density conversational stream with explicit user-bubble and system-bubble differentiation.Model Selector UI: A highly visible header dropdown containing the static arrays from the Section 3 Model Registry. Changing this updates the system state machine instantly for the next payload submission.4.2 Backend Layer (Agent Router Gateway)Routing Logic: A secure proxy server that shields the Agent Router API Key. It intercepts standard incoming payloads from the client and converts them into downstream Server-Sent Events (SSE).Payload Requirements: The endpoint /api/chat must receive and execute the following contract:JSON{
+# Project Lumina: Multi-Model AI Chat Interface
+
+## 1. Project Overview
+Lumina is a premium, minimal, and highly responsive AI chat interface inspired by Claude. The application features an engineering control dashboard allowing users to switch fluidly between frontier models on a per-session or per-message basis. The entire system utilizes Agent Router as the unified, OpenAI-compatible backend gateway to route user queries and stream live completions.
+
+## 2. Core Objectives
+- **Dynamic Model Interoperability**: Zero-downtime shifting between frontier models using a single Agent Router implementation.
+- **Immersive Chat UX**: High-fidelity interface with live token streaming, reasoning/thinking trace visibility, contextual metadata tags, and syntax-highlighted code blocks.
+- **Robust Multi-Model Support**: Support for OpenAI, Anthropic, and DeepSeek frontier models.
+
+## 3. Model Scope & Registry
+The application explicitly registers, displays, and routes queries to the active frontier models on Agent Router:
+
+| Provider | Agent Router Model ID | Interface Display Name | Target Optimizations |
+| :--- | :--- | :--- | :--- |
+| OpenAI | `gpt-5.6-sol` | GPT-5.6 Sol | Flagship Multimodal Synthesis & High-Level Strategy |
+| OpenAI | `gpt-6-astra` | GPT-6 Astra | Next-Gen Frontier Intelligence & Advanced Reasoning |
+| Anthropic | `claude-opus-4-8` | Claude 4.8 Opus | Deep Structural Research & Complex Problem Solving |
+| Anthropic | `claude-opus-5` | Claude Opus 5 | Frontier Autonomous Synthesis & Theoretical Analysis |
+| DeepSeek | `deepseek-v4-flash` | DeepSeek V4 Flash | High-Speed Thought, Coding & Cost-Effective Reasoning |
+
+## 4. Technical Architecture Blueprint
+### 4.1 Frontend Component Layer
+- **Layout**: Modern Single Page Application (SPA) with a dual-pane responsive layout.
+- **Left Sidebar**: Active chat history threads tracking session IDs, with a prominent "+ New Chat" button.
+- **Main Chat Canvas**: High-density conversational stream with user-bubble and assistant-bubble differentiation.
+- **Model Selector UI**: Header dropdown populated dynamically from `/api/models`. Changing models updates the active session state.
+
+### 4.2 Backend Layer (Agent Router Gateway)
+- **Routing Logic**: FastAPI proxy server securing the `AGENTROUTER_API_KEY`, formatting upstream requests with client fingerprinting headers, and converting upstream chunks into Server-Sent Events (SSE).
+- **Payload Contract**: Endpoint `/api/chat` accepts:
+```json
+{
   "message": "User query string here",
-  "model_id": "agentrouter/claude-sonnet-4-5"
+  "model_id": "gpt-5.6-sol",
+  "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
+  "images": ["data:image/png;base64,..."]
 }
+```
 
----
+## 5. Functional Requirements & Interaction Flow
+### 5.1 Core Conversational Mechanics
+1. **State Initialization**: User selects target model (defaults to `gpt-5.6-sol`).
+2. **Message Dispatch**: User inputs text and submits. Input field locks during generation.
+3. **Stream Acquisition**: App initiates `POST /api/chat`. Backend proxies to Agent Router with `stream=True`.
+4. **Live Token & Reasoning Rendering**: Frontend reads chunk stream text line-by-line, parsing `data: {"token": "..."}` and `data: {"reasoning": "..."}` payloads, rendering reasoning in a collapsible "Thinking" block and streaming content to the bubble.
 
-### 5. Functional Requirements & Interaction Flow
+### 5.2 Premium UI Enhancements
+- **Per-Message Model Badges**: Subtle mono tag indicating which model produced that text block.
+- **Markdown & Technical Blocks**: Native markdown formatting with copyable code blocks.
+- **Stop-Stream Directive**: Functional button appearing only during active generation to instantly cancel the async network stream.
 
-#### 5.1 Core Conversational Mechanics
-1.  **State Initialization:** The user selects a target model from the Engine Dropdown (defaults to `agentrouter/gpt-5.5`).
-2.  **Message Dispatch:** User inputs text and fires the submit sequence. The interface locks the input field to prevent multi-post pollution and injects the user message block immediately onto the canvas.
-3.  **Stream Acquisition:** The app initiates a POST request to the backend. The backend proxies to Agent Router using `stream=True` configuration.
-4.  **Live Token Rendering:** The frontend reads the chunk stream text line-by-line, parsing `data: {"token": "..."}` payloads and appends the strings in real-time to the active message bubble.
-
-#### 5.2 Premium UI Enhancements
-*   **Per-Message Model Badges:** Every message generated by the AI must display a subtle font-mono tag showing which model produced that specific text block (e.g., `[Engine: Claude 4.5 Sonnet]`).
-*   **Markdown & Technical Blocks:** The conversational viewport must render standard markdown styling natively (bolding, headers, lists). Code sections must be encased in dark-mode blocks featuring syntax color rules and a mechanical "Copy Code" feature button.
-*   **Stop-Stream Directive:** A functional button appearing only during active generation cycles that closes the async network stream instantly to truncate responses.
-
----
-
-### 6. Environment Security & Variables
-
-All authentication layers must be managed strictly via secure platform configurations.
-*   `AGENTROUTER_API_KEY`: Required token for downstream authentications.
-*   `CORS_ALLOW_ORIGINS`: Configured to permit localized cross-origin requests during app synthesis.
+## 6. Environment Security & Variables
+- `AGENTROUTER_API_KEY`: Required token for downstream Agent Router authentication.
+- `CORS_ALLOW_ORIGINS`: Configured to permit cross-origin requests during development.

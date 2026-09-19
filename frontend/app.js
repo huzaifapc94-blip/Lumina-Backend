@@ -4,7 +4,7 @@ let modelsRegistry = [];
 let sessions = {};
 let activeSessionId = null;
 let activeAbortController = null;
-let currentModelId = 'gpt-5.5';
+let currentModelId = 'gpt-5.6-sol';
 let isNearBottom = true;
 let pendingAttachments = [];
 
@@ -94,9 +94,9 @@ async function loadModelsRegistry() {
     } catch (error) {
         console.error('Failed to load models list:', error);
         // Fallback static option
-        engineSelect.innerHTML = '<option value="gpt-5.5">GPT-5.5 (Flagship)</option>';
-        currentModelId = 'gpt-5.5';
-        updateModelDetails('gpt-5.5');
+        engineSelect.innerHTML = '<option value="gpt-5.6-sol">GPT-5.6 Sol</option>';
+        currentModelId = 'gpt-5.6-sol';
+        updateModelDetails('gpt-5.6-sol');
     }
 }
 

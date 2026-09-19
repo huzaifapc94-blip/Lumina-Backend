@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 from typing import Any, List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,9 +38,15 @@ app.add_middleware(
 MODEL_REGISTRY = [
     {
         "provider": "OpenAI",
-        "model_id": "gpt-5.5",
-        "display_name": "GPT-5.5 (Flagship)",
-        "optimizations": "Advanced Logic, Multimodal Synthesis & Strategy"
+        "model_id": "gpt-5.6-sol",
+        "display_name": "GPT-5.6 Sol",
+        "optimizations": "Flagship Multimodal Synthesis & High-Level Strategy"
+    },
+    {
+        "provider": "OpenAI",
+        "model_id": "gpt-6-astra",
+        "display_name": "GPT-6 Astra",
+        "optimizations": "Next-Gen Frontier Intelligence & Advanced Reasoning"
     },
     {
         "provider": "Anthropic",
@@ -49,23 +56,39 @@ MODEL_REGISTRY = [
     },
     {
         "provider": "Anthropic",
-        "model_id": "claude-opus-4-7",
-        "display_name": "Claude 4.7 Opus",
-        "optimizations": "Extended Document Synthesis & Theoretical Math"
+        "model_id": "claude-opus-5",
+        "display_name": "Claude Opus 5",
+        "optimizations": "Frontier Autonomous Synthesis & Theoretical Analysis"
     },
     {
-        "provider": "Anthropic",
-        "model_id": "claude-opus-4-6",
-        "display_name": "Claude 4.6 Opus",
-        "optimizations": "Elite Coding, Software Engineering & Refactoring"
-    },
-    {
-        "provider": "Zhipu AI",
-        "model_id": "glm-5.2",
-        "display_name": "GLM 5.2",
-        "optimizations": "High-Performance Cross-Lingual Capabilities"
+        "provider": "DeepSeek",
+        "model_id": "deepseek-v4-flash",
+        "display_name": "DeepSeek V4 Flash",
+        "optimizations": "High-Speed Thought, Coding & Cost-Effective Reasoning"
     }
 ]
+
+VALID_1X1_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+def sanitize_image_url(url: str) -> str:
+    """Ensure data URLs are valid images to prevent upstream decoder crashes."""
+    if not url:
+        return VALID_1X1_PNG
+    if url.startswith("data:image/"):
+        try:
+            parts = url.split(",", 1)
+            if len(parts) != 2:
+                return VALID_1X1_PNG
+            raw = base64.b64decode(parts[1])
+            # If PNG, verify standard IEND termination chunk
+            if raw.startswith(b"\x89PNG\r\n\x1a\n") and b"IEND" not in raw:
+                return VALID_1X1_PNG
+            if len(raw) < 32:
+                return VALID_1X1_PNG
+            return url
+        except Exception:
+            return VALID_1X1_PNG
+    return url
 
 # Request Schema
 class Message(BaseModel):
@@ -218,8 +241,6 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
 
     timeout = httpx.Timeout(90.0, connect=10.0, read=90.0)
 
-    # Send an initial heartbeat to force headers to flush and bypass proxy buffering
-    yield ": heartbeat\n\n"
 
     try:
         emitted_text = False
@@ -231,9 +252,21 @@ async def stream_agent_router(model_id: str, messages: list, api_key: str):
             ) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
-                    error_text = error_body.decode("utf-8", errors="replace")
-                    yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {error_text}'})}\n\n"
+                    raw_text = error_body.decode("utf-8", errors="replace")
+                    error_msg = raw_text
+                    try:
+                        err_json = json.loads(raw_text)
+                        if isinstance(err_json, dict) and "error" in err_json:
+                            inner = err_json["error"]
+                            if isinstance(inner, dict) and "message" in inner:
+                                error_msg = inner["message"]
+                            elif isinstance(inner, str):
+                                error_msg = inner
+                    except Exception:
+                        pass
+                    yield f"data: {json.dumps({'error': f'Agent Router error ({response.status_code}): {error_msg}'})}\n\n"
                     return
+
 
                 async for line in response.aiter_lines():
                     line = line.strip()
@@ -304,7 +337,7 @@ async def chat_endpoint(request: ChatRequest):
         for img_data_url in request.images:
             content_parts.append({
                 "type": "image_url",
-                "image_url": {"url": img_data_url}
+                "image_url": {"url": sanitize_image_url(img_data_url)}
             })
         if request.message:
             content_parts.append({"type": "text", "text": request.message})
