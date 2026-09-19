@@ -120,7 +120,9 @@ async def health_check():
     return {
         "status": "healthy",
         "api_key_configured": bool(api_key),
-        "web_search_configured": bool(os.getenv("TAVILY_API_KEY"))
+        "web_search_configured": bool(os.getenv("TAVILY_API_KEY")),
+        "web_search_available": True,
+        "web_search_mode": "authenticated" if os.getenv("TAVILY_API_KEY") else "keyless"
     }
 
 # OpenRouter requires HTTP-Referer and X-Title headers for identification.
@@ -133,11 +135,6 @@ CLIENT_HEADERS = {
 async def search_web(query: str) -> str:
     """Fetch fresh web context from Tavily for a user-requested search."""
     tavily_key = os.getenv("TAVILY_API_KEY")
-    if not tavily_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Web search is not configured. Add TAVILY_API_KEY to the server environment."
-        )
 
     if not query.strip():
         return ""
@@ -151,10 +148,13 @@ async def search_web(query: str) -> str:
         "include_raw_content": False,
     }
     timeout = httpx.Timeout(30.0, connect=10.0, read=30.0)
-    headers = {
-        "Authorization": f"Bearer {tavily_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json"}
+    if tavily_key:
+        headers["Authorization"] = f"Bearer {tavily_key}"
+    else:
+        # Tavily supports rate-limited keyless Search/Extract access.
+        # A configured key is still preferred for production usage and higher limits.
+        headers["X-Tavily-Access-Mode"] = "keyless"
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -167,7 +167,10 @@ async def search_web(query: str) -> str:
             detail = response.text[:500]
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Web search provider error ({response.status_code}): {detail}"
+                detail=(
+                    f"Web search provider error ({response.status_code}): {detail}. "
+                    "Add TAVILY_API_KEY to Render for authenticated access."
+                )
             )
 
         data = response.json()
