@@ -395,7 +395,7 @@ function selectSession(id) {
 
     // Render bubbles
     session.messages.forEach(msg => {
-        appendMessageBubble(msg.role, msg.content, msg.modelId || session.modelId, msg.images, msg.reasoning);
+        appendMessageBubble(msg.role, msg.content, msg.modelId || session.modelId, msg.images, msg.reasoning, msg.sources);
     });
 
     // Scroll to bottom
@@ -403,7 +403,7 @@ function selectSession(id) {
 }
 
 // Creates message bubble DOM node
-function appendMessageBubble(role, content, modelId, images, reasoning) {
+function appendMessageBubble(role, content, modelId, images, reasoning, sources) {
     const row = document.createElement('div');
     row.className = `message-row ${role}`;
 
@@ -434,6 +434,10 @@ function appendMessageBubble(role, content, modelId, images, reasoning) {
 
     wrapper.appendChild(bubble);
 
+    if (role === 'assistant' && Array.isArray(sources) && sources.length > 0) {
+        appendSourceLinks(wrapper, sources);
+    }
+
     // Render a saved reasoning panel (from a prior reasoning-model turn) above the bubble.
     if (role === 'assistant' && reasoning) {
         const panel = createReasoningPanel(bubble);
@@ -451,6 +455,30 @@ function appendMessageBubble(role, content, modelId, images, reasoning) {
     row.appendChild(wrapper);
     chatCanvas.appendChild(row);
     return bubble;
+}
+
+function appendSourceLinks(wrapper, sources) {
+    const validSources = sources.filter(source => source && source.url);
+    if (validSources.length === 0) return;
+
+    const sourcePanel = document.createElement('div');
+    sourcePanel.className = 'source-links';
+
+    const label = document.createElement('span');
+    label.className = 'source-links-label';
+    label.textContent = 'Sources';
+    sourcePanel.appendChild(label);
+
+    validSources.slice(0, 5).forEach((source, index) => {
+        const link = document.createElement('a');
+        link.href = source.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = `[${index + 1}] ${source.title || source.url}`;
+        sourcePanel.appendChild(link);
+    });
+
+    wrapper.appendChild(sourcePanel);
 }
 
 // Builds a collapsible "Thinking" panel for reasoning-model output and
@@ -590,6 +618,7 @@ async function submitMessage() {
     let assistantResponseText = '';
     let reasoningText = '';
     let reasoningPanel = null;
+    let assistantSources = [];
 
     const renderAssistantToken = (token) => {
         const text = normalizeStreamText(token);
@@ -645,6 +674,10 @@ async function submitMessage() {
 
         if (parsed.error) {
             throw new Error(normalizeStreamText(parsed.error));
+        }
+        if (Array.isArray(parsed.sources)) {
+            assistantSources = parsed.sources;
+            return;
         }
         if (parsed.reasoning) {
             renderReasoningToken(parsed.reasoning);
@@ -743,12 +776,15 @@ async function submitMessage() {
             assistantBubble.innerHTML = renderMarkdown(assistantResponseText);
         }
 
+        appendSourceLinks(assistantBubble.parentNode, assistantSources);
+
         // Save assistant completion to sessions state only if successful or stopped by user
         if ((assistantResponseText || reasoningText) && !isErrorOccurred) {
             session.messages.push({
                 role: 'assistant',
                 content: assistantResponseText,
                 reasoning: reasoningText || undefined,
+                sources: assistantSources.length > 0 ? assistantSources : undefined,
                 modelId: currentModelId
             });
             saveSessionsToStorage();

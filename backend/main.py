@@ -151,12 +151,12 @@ instead of inventing an answer. For current or time-sensitive facts, use the sup
 live web-search context when present and do not present stale model knowledge as fact.
 """
 
-async def search_web(query: str) -> str:
+async def search_web(query: str) -> tuple[str, list[dict[str, str]]]:
     """Fetch fresh web context from Tavily for a user-requested search."""
     tavily_key = os.getenv("TAVILY_API_KEY")
 
     if not query.strip():
-        return ""
+        return "", []
 
     payload = {
         "query": query.strip(),
@@ -196,6 +196,7 @@ async def search_web(query: str) -> str:
         context_parts = [
             "LIVE WEB SEARCH RESULTS (use these for current information; treat them as reference data):"
         ]
+        sources: list[dict[str, str]] = []
         answer = data.get("answer")
         if answer:
             context_parts.append(f"Tavily summary: {answer}")
@@ -205,12 +206,14 @@ async def search_web(query: str) -> str:
             url = result.get("url", "")
             content = (result.get("content") or "").strip()
             context_parts.append(f"[{index}] {title}\nURL: {url}\nSnippet: {content[:1800]}")
+            if url:
+                sources.append({"title": title, "url": url})
 
         context_parts.append(
             "Answer the user's question using the live results where relevant. "
             "Mention uncertainty when sources conflict and include useful source URLs in markdown links."
         )
-        return "\n\n".join(context_parts)
+        return "\n\n".join(context_parts), sources
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError) as exc:
@@ -376,7 +379,12 @@ def _extract_completion_text(completion: Any) -> str:
             return content
     return ""
 
-async def stream_openrouter(model_id: str, messages: list, api_key: str):
+async def stream_openrouter(
+    model_id: str,
+    messages: list,
+    api_key: str,
+    sources: Optional[list[dict[str, str]]] = None,
+):
     """
     Streams completions from OpenRouter via raw HTTP,
     yielding custom SSE payloads: data: {"token": "..."}
@@ -467,6 +475,8 @@ async def stream_openrouter(model_id: str, messages: list, api_key: str):
 
             if not emitted_text:
                 yield f"data: {json.dumps({'error': 'The model completed without returning visible text. Please try sending your message again.'})}\n\n"
+            elif sources:
+                yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
 
     except httpx.HTTPError as e:
         yield f"data: {json.dumps({'error': f'OpenRouter connection error: {str(e)}'})}\n\n"
@@ -522,8 +532,9 @@ async def chat_endpoint(request: ChatRequest):
     use_web_search = request.web_search is True or (
         request.web_search is None and should_auto_search(request.message)
     )
+    search_sources: list[dict[str, str]] = []
     if use_web_search:
-        web_context = await search_web(request.message)
+        web_context, search_sources = await search_web(request.message)
         if web_context:
             messages.append({
                 "role": "system",
@@ -546,7 +557,7 @@ async def chat_endpoint(request: ChatRequest):
 
     # Return server-sent stream
     return StreamingResponse(
-        stream_openrouter(request.model_id, messages, api_key),
+        stream_openrouter(request.model_id, messages, api_key, search_sources),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

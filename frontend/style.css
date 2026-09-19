@@ -931,6 +931,35 @@ body {
     cursor: pointer;
 }
 
+.source-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    margin-top: 9px;
+    color: var(--text-muted, #8d91a3);
+    font-size: 11px;
+}
+
+.source-links-label {
+    color: #a78bfa;
+    font-weight: 600;
+}
+
+.source-links a {
+    color: #9aa4c5;
+    text-decoration: none;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.source-links a:hover {
+    color: #c4b5fd;
+    text-decoration: underline;
+}
+
 
 .input-container:focus-within {
     border-color: var(--border-color-hover);
