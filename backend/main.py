@@ -149,6 +149,9 @@ Devanagari or formal English. Keep the tone natural and concise.
 If a message has multiple plausible meanings, briefly ask a clarification question
 instead of inventing an answer. For current or time-sensitive facts, use the supplied
 live web-search context when present and do not present stale model knowledge as fact.
+When LIVE WEB SEARCH RESULTS are supplied below, you do have usable live-search
+context for this response: do not say that you lack internet access or live data.
+Answer directly from the supplied results and cite the provided source URLs.
 """
 
 async def search_web(query: str) -> tuple[str, list[dict[str, str]]]:
@@ -211,7 +214,8 @@ async def search_web(query: str) -> tuple[str, list[dict[str, str]]]:
 
         context_parts.append(
             "Answer the user's question using the live results where relevant. "
-            "Mention uncertainty when sources conflict and include useful source URLs in markdown links."
+            "Mention uncertainty when sources conflict and include useful source URLs in markdown links. "
+            "Do not claim that you lack internet access: these are the live search results available to you."
         )
         return "\n\n".join(context_parts), sources
     except HTTPException:
