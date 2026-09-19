@@ -152,6 +152,8 @@ live web-search context when present and do not present stale model knowledge as
 When LIVE WEB SEARCH RESULTS are supplied below, you do have usable live-search
 context for this response: do not say that you lack internet access or live data.
 Answer directly from the supplied results and cite the provided source URLs.
+For OpenAI or ChatGPT model/version questions, prioritize official OpenAI sources
+over third-party summaries and identify the answer as of the current date.
 """
 
 async def search_web(query: str) -> tuple[str, list[dict[str, str]]]:
@@ -161,14 +163,22 @@ async def search_web(query: str) -> tuple[str, list[dict[str, str]]]:
     if not query.strip():
         return "", []
 
+    search_query = query.strip()
     payload = {
-        "query": query.strip(),
+        "query": search_query,
         "topic": "general",
         "search_depth": "basic",
         "max_results": 5,
         "include_answer": True,
         "include_raw_content": False,
     }
+    if is_openai_model_query(search_query):
+        payload["query"] = f"latest official OpenAI model catalog current models {search_query}"
+        payload["include_domains"] = [
+            "openai.com",
+            "developers.openai.com",
+            "help.openai.com",
+        ]
     timeout = httpx.Timeout(30.0, connect=10.0, read=30.0)
     headers = {"Content-Type": "application/json"}
     if tavily_key:
@@ -275,6 +285,17 @@ def is_current_date_query(query: str) -> bool:
     return any(phrase in normalized for phrase in direct_phrases) or (
         any(marker in normalized for marker in current_markers)
         and any(marker in normalized for marker in date_markers)
+    )
+
+def is_openai_model_query(query: str) -> bool:
+    """Detect OpenAI model/version questions that need first-party sources."""
+    normalized = query.lower()
+    return (
+        ("openai" in normalized or "chatgpt" in normalized or "gpt" in normalized)
+        and any(
+            term in normalized
+            for term in ("latest", "newest", "current", "model", "version", "naya")
+        )
     )
 
 def current_date_answer(query: str) -> str:
