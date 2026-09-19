@@ -135,6 +135,22 @@ CLIENT_HEADERS = {
     "Accept": "application/json, text/event-stream, */*",
 }
 
+ASSISTANT_SYSTEM_PROMPT = """You are Lumina, a careful multilingual assistant.
+
+Understand the user's intended meaning even when they use Roman Urdu, Roman Hindi,
+Urdu or Hindi script, English code-switching, informal spelling, missing vowels,
+typos, or phonetic spellings. For example, interpret phrases like 'aj kya date hy',
+'mujhe ye samjhao', and 'yeh kaise hota hy' by meaning, not literal spelling.
+
+Reply in the user's language and script when practical. If the user writes Roman Urdu
+or Roman Hindi, reply in Roman Urdu/Hindi rather than unexpectedly switching to
+Devanagari or formal English. Keep the tone natural and concise.
+
+If a message has multiple plausible meanings, briefly ask a clarification question
+instead of inventing an answer. For current or time-sensitive facts, use the supplied
+live web-search context when present and do not present stale model knowledge as fact.
+"""
+
 async def search_web(query: str) -> str:
     """Fetch fresh web context from Tavily for a user-requested search."""
     tavily_key = os.getenv("TAVILY_API_KEY")
@@ -496,8 +512,9 @@ async def chat_endpoint(request: ChatRequest):
             }
         )
 
-    # Reconstruct messages payload
-    messages = []
+    # Reconstruct messages payload. Keep language/intent instructions first so every
+    # model handles Roman Urdu, Hindi, Urdu, typos, and code-switching consistently.
+    messages = [{"role": "system", "content": ASSISTANT_SYSTEM_PROMPT}]
     if request.history:
         for msg in request.history:
             messages.append({"role": msg.role, "content": msg.content})
