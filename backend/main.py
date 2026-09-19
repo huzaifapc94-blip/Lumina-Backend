@@ -40,31 +40,36 @@ MODEL_REGISTRY = [
         "provider": "NVIDIA",
         "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
         "display_name": "Nemotron 3 Ultra (550B)",
-        "optimizations": "Massive-Scale Reasoning, Deep Analysis & Research"
+        "optimizations": "Massive-Scale Reasoning, Deep Analysis & Research",
+        "supports_vision": false
     },
     {
         "provider": "Qwen",
         "model_id": "qwen/qwen3.8-27b",
         "display_name": "Qwen 3.8 27B",
-        "optimizations": "Advanced Multilingual Coding & Logical Reasoning"
+        "optimizations": "Advanced Multilingual Coding & Logical Reasoning",
+        "supports_vision": false
     },
     {
         "provider": "Z.AI",
         "model_id": "z-ai/glm-5.2",
         "display_name": "GLM 5.2",
-        "optimizations": "High-Performance Cross-Lingual Capabilities"
+        "optimizations": "High-Performance Cross-Lingual Capabilities",
+        "supports_vision": false
     },
     {
         "provider": "Google",
         "model_id": "google/gemma-4-31b-it:free",
         "display_name": "Gemma 4 31B (Free)",
-        "optimizations": "Open-Source Efficiency, Instruction Following & Safety"
+        "optimizations": "Open-Source Efficiency, Instruction Following & Safety",
+        "supports_vision": false
     },
     {
         "provider": "DeepSeek",
         "model_id": "deepseek/deepseek-v4-flash-0731:free",
         "display_name": "DeepSeek V4 Flash 0731 (Free)",
-        "optimizations": "High-Speed Thought, Coding & Cost-Effective Reasoning"
+        "optimizations": "High-Speed Thought, Coding & Cost-Effective Reasoning",
+        "supports_vision": false
     }
 ]
 
@@ -322,6 +327,15 @@ async def chat_endpoint(request: ChatRequest):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid model_id: '{request.model_id}'. Choose from registry."
         )
+
+    # Check if model supports vision when images are attached
+    if request.images:
+        model_info = next((m for m in MODEL_REGISTRY if m["model_id"] == request.model_id), None)
+        if model_info and not model_info.get("supports_vision", False):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Model '{model_info['display_name']}' does not support image input."
+            )
 
     # Reconstruct messages payload
     messages = []

@@ -212,6 +212,18 @@ function updateModelDetails(modelId) {
     } else {
         engineDetails.textContent = 'Multi-model routing gateway';
     }
+
+    if (model && model.supports_vision === false) {
+        attachBtn.disabled = true;
+        attachBtn.title = "This model does not support image input";
+        if (pendingAttachments.length > 0) {
+            pendingAttachments = [];
+            attachmentPreview.innerHTML = '';
+        }
+    } else {
+        attachBtn.disabled = false;
+        attachBtn.title = "Attach image";
+    }
 }
 
 // Handles input area resizing
