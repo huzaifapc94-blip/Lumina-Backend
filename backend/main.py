@@ -210,7 +210,9 @@ def should_auto_search(query: str) -> bool:
         "price", "cost", "rate", "stock", "weather", "forecast", "score",
         "standings", "schedule", "election", "president", "ceo", "release date",
         "available now", "near me", "open now", "who is", "aaj", "abhi", "taza",
-        "nayi khabar", "latest news", "haal hi mein"
+        "nayi khabar", "latest news", "haal hi mein", "what is the date", "what's the date",
+        "today's date", "todays date", "to day date", "current date", "current day",
+        "what day is it", "what time is it", "time right now"
     )
     explicit_search_terms = (
         "search the web", "look it up", "browse the web", "check online",
