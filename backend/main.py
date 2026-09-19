@@ -1,6 +1,9 @@
 import os
 import json
 import base64
+import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -206,6 +209,9 @@ def should_auto_search(query: str) -> bool:
     if not normalized:
         return False
 
+    if is_current_date_query(normalized):
+        return True
+
     freshness_terms = (
         "latest", "most recent", "current", "right now", "today", "tonight",
         "this week", "this month", "this year", "recent", "new update",
@@ -213,7 +219,9 @@ def should_auto_search(query: str) -> bool:
         "price", "cost", "rate", "stock", "weather", "forecast", "score",
         "standings", "schedule", "election", "president", "ceo", "release date",
         "available now", "near me", "open now", "who is", "aaj", "abhi", "taza",
-        "nayi khabar", "latest news", "haal hi mein", "what is the date", "what's the date",
+        "nayi khabar", "latest news", "haal hi mein", "تازہ", "خبر", "आज", "अभी", "ताज़ा",
+        "समाचार", "आज की", "आज का", "क्या तारीख", "آج", "ابھی", "تازہ خبر",
+        "what is the date", "what's the date",
         "today's date", "todays date", "to day date", "current date", "current day",
         "what day is it", "what time is it", "time right now"
     )
@@ -222,6 +230,49 @@ def should_auto_search(query: str) -> bool:
         "verify online", "internet par check", "online check"
     )
     return any(term in normalized for term in freshness_terms + explicit_search_terms)
+
+def is_current_date_query(query: str) -> bool:
+    """Recognize current-date questions across English, Roman Urdu, Urdu, and Hindi."""
+    normalized = re.sub(r"[^\w\sÀ-ÖØ-öø-ÿ\u0600-\u06ff\u0900-\u097f]", " ", query.lower())
+    normalized = " ".join(normalized.split())
+
+    date_markers = (
+        "date", "day", "tareekh", "tarikh", "تاریخ", "تاریخ", "तारीख", "दिन"
+    )
+    current_markers = (
+        "today", "todays", "today s", "aj", "aaj", "آج", "आज", "current",
+        "now", "abhi", "ابھی", "अभी"
+    )
+    direct_phrases = (
+        "what is the date", "what day is it", "today date", "to day date",
+        "aj ki date", "aaj ki date", "aj kya date", "aaj kya date",
+        "aj ki tareekh", "aaj ki tareekh", "آج کی تاریخ", "آج کیا تاریخ ہے",
+        "आज की तारीख", "आज क्या तारीख है"
+    )
+    return any(phrase in normalized for phrase in direct_phrases) or (
+        any(marker in normalized for marker in current_markers)
+        and any(marker in normalized for marker in date_markers)
+    )
+
+def current_date_answer(query: str) -> str:
+    """Return an authoritative local date instead of asking a model to guess it."""
+    timezone_name = os.getenv("LUMINA_TIMEZONE", "Asia/Karachi")
+    try:
+        now = datetime.now(ZoneInfo(timezone_name))
+    except Exception:
+        timezone_name = "UTC"
+        now = datetime.now(ZoneInfo("UTC"))
+
+    date_text = now.strftime("%A, %d %B %Y")
+    if re.search(r"[\u0900-\u097f]", query):
+        return f"आज की तारीख {date_text} है। (समय क्षेत्र: {timezone_name})"
+    if re.search(r"[\u0600-\u06ff]", query):
+        return f"آج کی تاریخ {date_text} ہے۔ (ٹائم زون: {timezone_name})"
+    return f"Aaj ki tareekh {date_text} hai. (Time zone: {timezone_name})"
+
+async def stream_direct_answer(answer: str):
+    """Stream a deterministic answer using the same SSE contract as model output."""
+    yield f"data: {json.dumps({'token': answer}, ensure_ascii=False)}\n\n"
 
 def _get_field(obj: Any, field: str) -> Any:
     """Read a field from dicts, SDK models, or pydantic extra fields."""
@@ -432,6 +483,18 @@ async def chat_endpoint(request: ChatRequest):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Model '{model_info['display_name']}' does not support image input."
             )
+
+    # Dates are facts from the application clock, not something the model should guess.
+    if not request.images and is_current_date_query(request.message):
+        return StreamingResponse(
+            stream_direct_answer(current_date_answer(request.message)),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
 
     # Reconstruct messages payload
     messages = []
