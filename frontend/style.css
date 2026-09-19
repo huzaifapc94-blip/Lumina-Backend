@@ -920,6 +920,18 @@ body {
     transition: var(--transition-smooth);
 }
 
+.web-search-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 0 9px 4px;
+    color: var(--text-muted, #8d91a3);
+    font-size: 12px;
+    user-select: none;
+    cursor: pointer;
+}
+
+
 .input-container:focus-within {
     border-color: var(--border-color-hover);
     box-shadow: 0 0 0 1px rgba(95, 93, 236, 0.3), var(--glass-shadow);

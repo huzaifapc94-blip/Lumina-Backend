@@ -41,35 +41,35 @@ MODEL_REGISTRY = [
         "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
         "display_name": "Nemotron 3 Ultra (550B)",
         "optimizations": "Massive-Scale Reasoning, Deep Analysis & Research",
-        "supports_vision": false
+        "supports_vision": False
     },
     {
         "provider": "Qwen",
         "model_id": "qwen/qwen3.8-27b",
         "display_name": "Qwen 3.8 27B",
         "optimizations": "Advanced Multilingual Coding & Logical Reasoning",
-        "supports_vision": false
+        "supports_vision": False
     },
     {
         "provider": "Z.AI",
         "model_id": "z-ai/glm-5.2",
         "display_name": "GLM 5.2",
         "optimizations": "High-Performance Cross-Lingual Capabilities",
-        "supports_vision": false
+        "supports_vision": False
     },
     {
         "provider": "Google",
         "model_id": "google/gemma-4-31b-it:free",
         "display_name": "Gemma 4 31B (Free)",
         "optimizations": "Open-Source Efficiency, Instruction Following & Safety",
-        "supports_vision": false
+        "supports_vision": False
     },
     {
         "provider": "DeepSeek",
         "model_id": "deepseek/deepseek-v4-flash-0731:free",
         "display_name": "DeepSeek V4 Flash 0731 (Free)",
         "optimizations": "High-Speed Thought, Coding & Cost-Effective Reasoning",
-        "supports_vision": false
+        "supports_vision": False
     }
 ]
 
@@ -105,6 +105,8 @@ class ChatRequest(BaseModel):
     model_id: str
     history: Optional[List[Message]] = None
     images: Optional[List[str]] = None
+    # None means automatic search detection; True forces a web search.
+    web_search: Optional[bool] = None
 
 @app.get("/api/models")
 async def get_models():
@@ -117,7 +119,8 @@ async def health_check():
     api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("AGENTROUTER_API_KEY")
     return {
         "status": "healthy",
-        "api_key_configured": bool(api_key)
+        "api_key_configured": bool(api_key),
+        "web_search_configured": bool(os.getenv("TAVILY_API_KEY"))
     }
 
 # OpenRouter requires HTTP-Referer and X-Title headers for identification.
@@ -126,6 +129,94 @@ CLIENT_HEADERS = {
     "X-Title": "Lumina AI Chat",
     "Accept": "application/json, text/event-stream, */*",
 }
+
+async def search_web(query: str) -> str:
+    """Fetch fresh web context from Tavily for a user-requested search."""
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    if not tavily_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Web search is not configured. Add TAVILY_API_KEY to the server environment."
+        )
+
+    if not query.strip():
+        return ""
+
+    payload = {
+        "query": query.strip(),
+        "topic": "general",
+        "search_depth": "basic",
+        "max_results": 5,
+        "include_answer": True,
+        "include_raw_content": False,
+    }
+    timeout = httpx.Timeout(30.0, connect=10.0, read=30.0)
+    headers = {
+        "Authorization": f"Bearer {tavily_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                "https://api.tavily.com/search",
+                headers=headers,
+                json=payload,
+            )
+        if response.status_code >= 400:
+            detail = response.text[:500]
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Web search provider error ({response.status_code}): {detail}"
+            )
+
+        data = response.json()
+        context_parts = [
+            "LIVE WEB SEARCH RESULTS (use these for current information; treat them as reference data):"
+        ]
+        answer = data.get("answer")
+        if answer:
+            context_parts.append(f"Tavily summary: {answer}")
+
+        for index, result in enumerate(data.get("results", []), start=1):
+            title = result.get("title", "Untitled source")
+            url = result.get("url", "")
+            content = (result.get("content") or "").strip()
+            context_parts.append(f"[{index}] {title}\nURL: {url}\nSnippet: {content[:1800]}")
+
+        context_parts.append(
+            "Answer the user's question using the live results where relevant. "
+            "Mention uncertainty when sources conflict and include useful source URLs in markdown links."
+        )
+        return "\n\n".join(context_parts)
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Web search failed: {exc}"
+        ) from exc
+
+def should_auto_search(query: str) -> bool:
+    """Detect questions where fresh web information is likely required."""
+    normalized = " ".join(query.lower().split())
+    if not normalized:
+        return False
+
+    freshness_terms = (
+        "latest", "most recent", "current", "right now", "today", "tonight",
+        "this week", "this month", "this year", "recent", "new update",
+        "news", "headline", "breaking", "as of", "updated", "2026",
+        "price", "cost", "rate", "stock", "weather", "forecast", "score",
+        "standings", "schedule", "election", "president", "ceo", "release date",
+        "available now", "near me", "open now", "who is", "aaj", "abhi", "taza",
+        "nayi khabar", "latest news", "haal hi mein"
+    )
+    explicit_search_terms = (
+        "search the web", "look it up", "browse the web", "check online",
+        "verify online", "internet par check", "online check"
+    )
+    return any(term in normalized for term in freshness_terms + explicit_search_terms)
 
 def _get_field(obj: Any, field: str) -> Any:
     """Read a field from dicts, SDK models, or pydantic extra fields."""
@@ -342,6 +433,17 @@ async def chat_endpoint(request: ChatRequest):
     if request.history:
         for msg in request.history:
             messages.append({"role": msg.role, "content": msg.content})
+
+    use_web_search = request.web_search is True or (
+        request.web_search is None and should_auto_search(request.message)
+    )
+    if use_web_search:
+        web_context = await search_web(request.message)
+        if web_context:
+            messages.append({
+                "role": "system",
+                "content": web_context,
+            })
 
     # Build user message — multimodal if images are attached
     if request.images:
