@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from typing import Any, List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -69,6 +69,24 @@ MODEL_REGISTRY = [
     }
 ]
 
+# Text-to-speech models use OpenRouter's audio endpoint, not chat completions.
+SPEECH_MODEL_REGISTRY = [
+    {
+        "provider": "Deepgram",
+        "model_id": "deepgram/flux-tts:free",
+        "display_name": "Flux TTS (Free)",
+        "optimizations": "Natural English Text-to-Speech",
+        "default_voice": "alloy"
+    },
+    {
+        "provider": "Fish Audio",
+        "model_id": "fish-audio/s2.1-pro-free:free",
+        "display_name": "S2.1 Pro Free (Free)",
+        "optimizations": "Expressive Multilingual Speech Synthesis",
+        "default_voice": "alloy"
+    }
+]
+
 VALID_1X1_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 def sanitize_image_url(url: str) -> str:
@@ -104,10 +122,64 @@ class ChatRequest(BaseModel):
     # None means automatic search detection; True forces a web search.
     web_search: Optional[bool] = None
 
+class SpeechRequest(BaseModel):
+    text: str
+    model_id: str
+    voice: Optional[str] = None
+    response_format: str = "mp3"
+
 @app.get("/api/models")
 async def get_models():
     """Retrieve the static Model Registry array."""
     return MODEL_REGISTRY
+
+@app.get("/api/speech-models")
+async def get_speech_models():
+    """Retrieve the text-to-speech model registry."""
+    return SPEECH_MODEL_REGISTRY
+
+@app.post("/api/speech")
+async def speech_endpoint(request: SpeechRequest):
+    """Generate an audio reply through OpenRouter's OpenAI-compatible TTS API."""
+    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("AGENTROUTER_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY is not configured on the server.")
+
+    model_info = next((m for m in SPEECH_MODEL_REGISTRY if m["model_id"] == request.model_id), None)
+    if not model_info:
+        raise HTTPException(status_code=400, detail=f"Invalid speech model: '{request.model_id}'.")
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Speech text cannot be empty.")
+    if request.response_format not in {"mp3", "pcm"}:
+        raise HTTPException(status_code=400, detail="response_format must be mp3 or pcm.")
+
+    payload = {
+        "model": request.model_id,
+        "input": request.text[:4000],
+        "voice": request.voice or model_info["default_voice"],
+        "response_format": request.response_format,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": CLIENT_HEADERS["HTTP-Referer"],
+        "X-Title": CLIENT_HEADERS["X-Title"],
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post("https://openrouter.ai/api/v1/audio/speech", json=payload, headers=headers)
+        if response.status_code >= 400:
+            try:
+                error_payload = response.json()
+                detail = error_payload.get("error", {}).get("message", str(error_payload))
+            except Exception:
+                detail = response.text[:500]
+            raise HTTPException(status_code=response.status_code, detail=f"Speech generation failed: {detail}")
+        media_type = "audio/mpeg" if request.response_format == "mp3" else "audio/pcm"
+        return Response(content=response.content, media_type=media_type)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Speech provider connection error: {exc}")
 
 @app.get("/api/health")
 async def health_check():

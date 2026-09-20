@@ -318,6 +318,15 @@ body {
     width: 240px;
 }
 
+.speech-select-wrapper {
+    width: 190px;
+}
+
+.speech-select-wrapper .engine-select {
+    color: #c4b5fd;
+    border-color: rgba(139, 92, 246, 0.35);
+}
+
 .engine-select {
     width: 100%;
     appearance: none;
@@ -811,6 +820,31 @@ body {
 .attach-btn:hover {
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.05);
+}
+
+.voice-input-btn.recording {
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.14);
+    animation: voice-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+    50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.12); }
+}
+
+.speak-btn {
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+    margin-top: 5px;
+}
+
+.speak-btn:hover {
+    color: var(--accent-indigo);
+    background: rgba(95, 93, 236, 0.1);
 }
 
 .attach-btn:disabled {

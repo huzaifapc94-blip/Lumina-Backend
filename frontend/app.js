@@ -5,6 +5,10 @@ let sessions = {};
 let activeSessionId = null;
 let activeAbortController = null;
 let currentModelId = 'inclusionai/ling-3.0-flash-vl:free';
+let speechModelsRegistry = [];
+let currentSpeechModelId = 'deepgram/flux-tts:free';
+let voiceRecognition = null;
+let isRecordingVoice = false;
 let isNearBottom = true;
 let pendingAttachments = [];
 
@@ -41,6 +45,19 @@ const FALLBACK_MODELS = [
     }
 ];
 
+const FALLBACK_SPEECH_MODELS = [
+    {
+        model_id: 'deepgram/flux-tts:free',
+        display_name: 'Flux TTS (Free)',
+        default_voice: 'alloy'
+    },
+    {
+        model_id: 'fish-audio/s2.1-pro-free:free',
+        display_name: 'S2.1 Pro Free (Free)',
+        default_voice: 'alloy'
+    }
+];
+
 
 // DOM Elements cache
 const sidebar = document.getElementById('sidebar');
@@ -51,6 +68,7 @@ const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 const engineSelect = document.getElementById('engine-select');
 const engineDetails = document.getElementById('engine-details');
+const speechModelSelect = document.getElementById('speech-model-select');
 const chatCanvas = document.getElementById('chat-canvas');
 const emptyState = document.getElementById('empty-state');
 const stopStreamPanel = document.getElementById('stop-stream-panel');
@@ -60,6 +78,7 @@ const sendBtn = document.getElementById('send-btn');
 const sidebarOverlay = document.getElementById('sidebar-overlay');
 const fileInput = document.getElementById('file-input');
 const attachBtn = document.getElementById('attach-btn');
+const voiceInputBtn = document.getElementById('voice-input-btn');
 const attachmentPreview = document.getElementById('attachment-preview');
 
 // Initial Setup
@@ -72,10 +91,34 @@ async function initApp() {
     loadSessionsFromStorage();
     await checkServerHealth();
     await loadModelsRegistry();
+    await loadSpeechModelsRegistry();
     renderSidebar();
 
     // Auto-focus input
     chatInput.focus();
+}
+
+async function loadSpeechModelsRegistry() {
+    try {
+        const response = await fetch('/api/speech-models');
+        if (!response.ok) throw new Error(`Speech models API returned ${response.status}`);
+        const models = await response.json();
+        if (!Array.isArray(models) || models.length === 0) throw new Error('Empty speech model registry');
+        speechModelsRegistry = models;
+    } catch (error) {
+        console.error('Failed to load speech models list:', error);
+        speechModelsRegistry = FALLBACK_SPEECH_MODELS;
+    }
+
+    speechModelSelect.innerHTML = '';
+    speechModelsRegistry.forEach((model) => {
+        const option = document.createElement('option');
+        option.value = model.model_id;
+        option.textContent = `Voice: ${model.display_name}`;
+        speechModelSelect.appendChild(option);
+    });
+    currentSpeechModelId = speechModelsRegistry[0].model_id;
+    speechModelSelect.value = currentSpeechModelId;
 }
 
 // Check backend status
@@ -156,6 +199,10 @@ function setupEventListeners() {
         updateModelDetails(currentModelId);
     });
 
+    speechModelSelect.addEventListener('change', (e) => {
+        currentSpeechModelId = e.target.value;
+    });
+
     // Sidebar Slide Drawer for mobile
     sidebarToggle.addEventListener('click', () => {
         sidebar.classList.toggle('open');
@@ -202,6 +249,8 @@ function setupEventListeners() {
     sendBtn.addEventListener('click', () => {
         submitMessage();
     });
+
+    voiceInputBtn.addEventListener('click', toggleVoiceInput);
 
     // File Attachment
     attachBtn.addEventListener('click', (e) => {
@@ -271,6 +320,74 @@ function updateModelDetails(modelId) {
     } else {
         attachBtn.disabled = false;
         attachBtn.title = "Attach image";
+    }
+}
+
+function toggleVoiceInput() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) {
+        alert('Voice input is not supported in this browser. Please use Chrome or Edge.');
+        return;
+    }
+
+    if (isRecordingVoice && voiceRecognition) {
+        voiceRecognition.stop();
+        return;
+    }
+
+    voiceRecognition = new Recognition();
+    voiceRecognition.lang = navigator.language || 'en-US';
+    voiceRecognition.interimResults = false;
+    voiceRecognition.maxAlternatives = 1;
+    isRecordingVoice = true;
+    voiceInputBtn.classList.add('recording');
+    voiceInputBtn.title = 'Stop recording';
+
+    voiceRecognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript.trim();
+        if (transcript) {
+            chatInput.value = transcript;
+            autoGrowTextarea(chatInput);
+            updateSendBtnState();
+        }
+    };
+    voiceRecognition.onerror = (event) => {
+        console.error('Voice input error:', event.error);
+    };
+    voiceRecognition.onend = () => {
+        isRecordingVoice = false;
+        voiceInputBtn.classList.remove('recording');
+        voiceInputBtn.title = 'Record a voice message';
+    };
+    voiceRecognition.start();
+}
+
+async function speakAssistantMessage(text) {
+    const cleanText = text.trim();
+    if (!cleanText) return;
+
+    try {
+        const response = await fetch('/api/speech', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text: cleanText,
+                model_id: currentSpeechModelId,
+                response_format: 'mp3'
+            })
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const audioUrl = URL.createObjectURL(await response.blob());
+        const audio = new Audio(audioUrl);
+        audio.onended = () => URL.revokeObjectURL(audioUrl);
+        await audio.play();
+    } catch (error) {
+        // Keep voice replies usable if a provider voice is unavailable or the API is offline.
+        console.error('Speech generation failed; using browser voice:', error);
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(new SpeechSynthesisUtterance(cleanText));
+        }
     }
 }
 
@@ -481,6 +598,17 @@ function appendMessageBubble(role, content, modelId, images, reasoning, sources)
     }
 
     wrapper.appendChild(bubble);
+
+    if (role === 'assistant') {
+        const speakButton = document.createElement('button');
+        speakButton.type = 'button';
+        speakButton.className = 'speak-btn';
+        speakButton.title = 'Play voice reply';
+        speakButton.setAttribute('aria-label', 'Play voice reply');
+        speakButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>';
+        speakButton.addEventListener('click', () => speakAssistantMessage(bubble.textContent));
+        wrapper.appendChild(speakButton);
+    }
 
     if (role === 'assistant' && Array.isArray(sources) && sources.length > 0) {
         appendSourceLinks(wrapper, sources);
