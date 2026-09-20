@@ -68,7 +68,6 @@ const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 const engineSelect = document.getElementById('engine-select');
 const engineDetails = document.getElementById('engine-details');
-const speechModelSelect = document.getElementById('speech-model-select');
 const chatCanvas = document.getElementById('chat-canvas');
 const emptyState = document.getElementById('empty-state');
 const stopStreamPanel = document.getElementById('stop-stream-panel');
@@ -100,7 +99,10 @@ async function initApp() {
 
 async function loadSpeechModelsRegistry() {
     try {
-        const response = await fetch('/api/speech-models');
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const response = await fetch('/api/speech-models', { signal: controller.signal });
+        clearTimeout(timeout);
         if (!response.ok) throw new Error(`Speech models API returned ${response.status}`);
         const models = await response.json();
         if (!Array.isArray(models) || models.length === 0) throw new Error('Empty speech model registry');
@@ -110,15 +112,17 @@ async function loadSpeechModelsRegistry() {
         speechModelsRegistry = FALLBACK_SPEECH_MODELS;
     }
 
-    speechModelSelect.innerHTML = '';
+    const speechGroup = document.createElement('optgroup');
+    speechGroup.label = 'Voice / Speech Models';
     speechModelsRegistry.forEach((model) => {
         const option = document.createElement('option');
         option.value = model.model_id;
-        option.textContent = `Voice: ${model.display_name}`;
-        speechModelSelect.appendChild(option);
+        option.textContent = model.display_name;
+        option.dataset.modelType = 'speech';
+        speechGroup.appendChild(option);
     });
+    engineSelect.appendChild(speechGroup);
     currentSpeechModelId = speechModelsRegistry[0].model_id;
-    speechModelSelect.value = currentSpeechModelId;
 }
 
 // Check backend status
@@ -195,13 +199,20 @@ async function loadModelsRegistry() {
 function setupEventListeners() {
     // Model Select
     engineSelect.addEventListener('change', (e) => {
+        const selectedSpeechModel = speechModelsRegistry.find(model => model.model_id === e.target.value);
+        if (selectedSpeechModel) {
+            currentSpeechModelId = selectedSpeechModel.model_id;
+            updateModelDetails(currentModelId);
+            engineDetails.textContent = `Voice: ${selectedSpeechModel.display_name}`;
+            return;
+        }
         currentModelId = e.target.value;
         updateModelDetails(currentModelId);
     });
 
-    speechModelSelect.addEventListener('change', (e) => {
-        currentSpeechModelId = e.target.value;
-    });
+    // Speech models live in the same selector as chat models. Selecting one
+    // changes the voice used by the speaker buttons; chat stays on the last
+    // selected text model because TTS models do not answer chat completions.
 
     // Sidebar Slide Drawer for mobile
     sidebarToggle.addEventListener('click', () => {
@@ -359,7 +370,14 @@ function toggleVoiceInput() {
         voiceInputBtn.classList.remove('recording');
         voiceInputBtn.title = 'Record a voice message';
     };
-    voiceRecognition.start();
+    try {
+        voiceRecognition.start();
+    } catch (error) {
+        console.error('Unable to start voice input:', error);
+        isRecordingVoice = false;
+        voiceInputBtn.classList.remove('recording');
+        voiceInputBtn.title = 'Record a voice message';
+    }
 }
 
 async function speakAssistantMessage(text) {
