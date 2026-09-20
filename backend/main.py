@@ -40,38 +40,31 @@ app.add_middleware(
 # Model Registry — uses OpenRouter model IDs from https://openrouter.ai/models
 MODEL_REGISTRY = [
     {
-        "provider": "NVIDIA",
-        "model_id": "nvidia/nemotron-3-ultra-550b-a55b",
-        "display_name": "Nemotron 3 Ultra (550B)",
-        "optimizations": "Massive-Scale Reasoning, Deep Analysis & Research",
+        "provider": "InclusionAI",
+        "model_id": "inclusionai/ling-3.0-flash-vl:free",
+        "display_name": "Ling 3.0 Flash VL (Free)",
+        "optimizations": "Visual Understanding, Agentic Workflows & Tool Calling",
+        "supports_vision": True
+    },
+    {
+        "provider": "Nex AGI",
+        "model_id": "nex-agi/nex-n2.5-mini:free",
+        "display_name": "Nex-N2.5-Mini (Free)",
+        "optimizations": "Fast Agentic Coding, Browser Use & Verified Outcomes",
         "supports_vision": False
     },
     {
-        "provider": "Qwen",
-        "model_id": "qwen/qwen3.8-27b",
-        "display_name": "Qwen 3.8 27B",
-        "optimizations": "Advanced Multilingual Coding & Logical Reasoning",
+        "provider": "Nex AGI",
+        "model_id": "nex-agi/nex-n2.5-pro:free",
+        "display_name": "Nex-N2.5-Pro (Free)",
+        "optimizations": "Advanced Agentic Coding, Research & Computer Use",
         "supports_vision": False
     },
     {
-        "provider": "Z.AI",
-        "model_id": "z-ai/glm-5.2",
-        "display_name": "GLM 5.2",
-        "optimizations": "High-Performance Cross-Lingual Capabilities",
-        "supports_vision": False
-    },
-    {
-        "provider": "Google",
-        "model_id": "google/gemma-4-31b-it:free",
-        "display_name": "Gemma 4 31B (Free)",
-        "optimizations": "Open-Source Efficiency, Instruction Following & Safety",
-        "supports_vision": False
-    },
-    {
-        "provider": "DeepSeek",
-        "model_id": "deepseek/deepseek-v4-flash-0731:free",
-        "display_name": "DeepSeek V4 Flash 0731 (Free)",
-        "optimizations": "High-Speed Thought, Coding & Cost-Effective Reasoning",
+        "provider": "InclusionAI",
+        "model_id": "inclusionai/ling-3.0-flash-sante:free",
+        "display_name": "Ling 3.0 Flash Sante (Free)",
+        "optimizations": "Medical Reasoning, Evidence-Based Retrieval & Safety",
         "supports_vision": False
     }
 ]

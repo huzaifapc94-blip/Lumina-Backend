@@ -4,9 +4,42 @@ let modelsRegistry = [];
 let sessions = {};
 let activeSessionId = null;
 let activeAbortController = null;
-let currentModelId = 'nvidia/nemotron-3-ultra-550b-a55b';
+let currentModelId = 'inclusionai/ling-3.0-flash-vl:free';
 let isNearBottom = true;
 let pendingAttachments = [];
+
+// Keep the selector usable even while the API is starting up or unavailable.
+// The backend remains the source of truth when it is reachable.
+const FALLBACK_MODELS = [
+    {
+        provider: 'InclusionAI',
+        model_id: 'inclusionai/ling-3.0-flash-vl:free',
+        display_name: 'Ling 3.0 Flash VL (Free)',
+        optimizations: 'Visual Understanding, Agentic Workflows & Tool Calling',
+        supports_vision: true
+    },
+    {
+        provider: 'Nex AGI',
+        model_id: 'nex-agi/nex-n2.5-mini:free',
+        display_name: 'Nex-N2.5-Mini (Free)',
+        optimizations: 'Fast Agentic Coding, Browser Use & Verified Outcomes',
+        supports_vision: false
+    },
+    {
+        provider: 'Nex AGI',
+        model_id: 'nex-agi/nex-n2.5-pro:free',
+        display_name: 'Nex-N2.5-Pro (Free)',
+        optimizations: 'Advanced Agentic Coding, Research & Computer Use',
+        supports_vision: false
+    },
+    {
+        provider: 'InclusionAI',
+        model_id: 'inclusionai/ling-3.0-flash-sante:free',
+        display_name: 'Ling 3.0 Flash Sante (Free)',
+        optimizations: 'Medical Reasoning, Evidence-Based Retrieval & Safety',
+        supports_vision: false
+    }
+];
 
 
 // DOM Elements cache
@@ -74,7 +107,14 @@ async function checkServerHealth() {
 async function loadModelsRegistry() {
     try {
         const response = await fetch('/api/models');
-        modelsRegistry = await response.json();
+        if (!response.ok) {
+            throw new Error(`Models API returned ${response.status}`);
+        }
+        const models = await response.json();
+        if (!Array.isArray(models) || models.length === 0) {
+            throw new Error('Models API returned an empty registry');
+        }
+        modelsRegistry = models;
 
         // Populating dropdown
         engineSelect.innerHTML = '';
@@ -93,10 +133,18 @@ async function loadModelsRegistry() {
         }
     } catch (error) {
         console.error('Failed to load models list:', error);
-        // Fallback static option
-        engineSelect.innerHTML = '<option value="nvidia/nemotron-3-ultra-550b-a55b">Nemotron 3 Ultra (550B)</option>';
-        currentModelId = 'nvidia/nemotron-3-ultra-550b-a55b';
-        updateModelDetails('nvidia/nemotron-3-ultra-550b-a55b');
+        // Fallback registry keeps all requested models visible without the API.
+        modelsRegistry = FALLBACK_MODELS;
+        engineSelect.innerHTML = '';
+        modelsRegistry.forEach((model) => {
+            const option = document.createElement('option');
+            option.value = model.model_id;
+            option.textContent = model.display_name;
+            engineSelect.appendChild(option);
+        });
+        currentModelId = modelsRegistry[0].model_id;
+        engineSelect.value = currentModelId;
+        updateModelDetails(currentModelId);
     }
 }
 
